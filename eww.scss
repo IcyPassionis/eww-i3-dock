@@ -63,6 +63,32 @@ window,
   background: rgba(221, 255, 255, 0.28);
 }
 
+.ctx-menu {
+  margin: 0 24px 6px 24px;
+  padding: 6px;
+  background: rgba(57, 20, 50, 0.95);
+  border: 2px solid rgba(30, 10, 26, 0.90);
+  border-radius: 16px;
+  box-shadow: 0 2px 12px 2px rgba(0, 0, 0, 0.25);
+  color: #DDFFFF;
+}
+
+.ctx-item {
+  margin: 2px 4px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  background: transparent;
+  color: #DDFFFF;
+}
+
+.ctx-item:hover {
+  background: rgba(93, 36, 84, 0.95);
+}
+
+.ctx-item:active {
+  background: rgba(125, 46, 107, 0.95);
+}
+
 .dock-open-area {
   min-height: 4px;
 }

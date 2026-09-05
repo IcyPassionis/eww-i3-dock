@@ -11,6 +11,8 @@ import time
 import zlib
 
 PINNED = "/home/boncuk/.config/eww/pinned-apps.json"
+_PINNED = []
+_PINNED_MTIME = None
 LAUNCHER_ICON = "/usr/share/icons/Adwaita/symbolic/actions/view-app-grid-symbolic.svg"
 ICON_BASES = [
     os.path.expanduser("~/.local/share/icons"),
@@ -397,21 +399,66 @@ def current_windows():
         return []
 
 
+def load_pinned(force=False):
+    """Pinned launchers, re-read when dock-menu.sh rewrites the file.
+
+    A stat per render is cheap (renders only happen on i3 events); without
+    this, pin/unpin would not show until the daemon restarts.
+    """
+    global _PINNED, _PINNED_MTIME
+    try:
+        mtime = os.path.getmtime(PINNED)
+    except OSError:
+        return _PINNED
+    if force or mtime != _PINNED_MTIME:
+        try:
+            with open(PINNED, encoding="utf-8") as file:
+                items = json.load(file)
+            if isinstance(items, list):
+                _PINNED = items
+                _PINNED_MTIME = mtime
+        except (OSError, json.JSONDecodeError):
+            pass
+    return _PINNED
+
+
 def yuck(value):
     return json.dumps(str(value), ensure_ascii=False)
 
 
-def button(name, icon, action, classes):
-    return (
+def shquote(value):
+    return "'" + str(value).replace("'", "'\"'\"'") + "'"
+
+
+def ctx_cmd(con, cls, desktop, command, pinned, running):
+    """Right-click handler: dock-ctx.sh shows the popover for this icon."""
+    args = [str(con or ""), cls or "", desktop or "", command or "",
+            "1" if pinned else "0", "1" if running else "0"]
+    return "/home/boncuk/.config/eww/dock-ctx.sh " + " ".join(shquote(arg) for arg in args)
+
+
+# Dismiss the popover on any left-click (stale menu must not linger).
+CLOSE_MENU = "; eww update menu-open=false >/dev/null 2>&1 || true"
+
+
+def button(name, icon, action, classes, ctx=None):
+    parts = (
         '(button :class ' + yuck("entry " + classes) +
-        ' :onclick ' + yuck(action) +
+        ' :onclick ' + yuck(action + CLOSE_MENU) +
+        ' :timeout "5s"'
+    )
+    if ctx:
+        parts += ' :onrightclick ' + yuck(ctx)
+    return (
+        parts +
         ' :tooltip ' + yuck(name) +
         ' (image :class "icon" :path ' + yuck(icon) +
         ' :image-width 32 :image-height 32))'
     )
 
 
-def render(pinned, entries, index):
+def render(entries, index):
+    pinned = load_pinned()
     windows = current_windows()
 
     result = [button("Uygulamalar", LAUNCHER_ICON, "rofi -modi drun,run -show drun", "launcher")]
@@ -420,7 +467,8 @@ def render(pinned, entries, index):
     for item in pinned:
         pattern = re.compile(item.get("match", ""), re.IGNORECASE)
         match = next((window for window in windows if pattern.search(window["class"] + " " + window["instance"])), None)
-        desktop = next((entry for entry in entries if entry["stem"] == item.get("desktop", "").removesuffix(".desktop").lower()), None)
+        desktop_stem = item.get("desktop", "").removesuffix(".desktop").lower()
+        desktop = next((entry for entry in entries if entry["stem"] == desktop_stem), None)
         if desktop is None and match:
             desktop = app_for_window(match, entries, index)
         icon = find_icon((desktop or {}).get("icon", "")) if desktop else None
@@ -429,7 +477,9 @@ def render(pinned, entries, index):
             icon = xwin_icon(match["xwin"], key)
         icon = icon or LAUNCHER_ICON
         action = f"i3-msg '[con_id={match['id']}] focus'" if match else item["command"]
-        result.append(button(item["name"], icon, action, "pinned open" if match else "pinned"))
+        ctx = ctx_cmd(match["id"] if match else "", match["class"] if match else "",
+                      desktop_stem, item["command"], True, match is not None)
+        result.append(button(item["name"], icon, action, "pinned open" if match else "pinned", ctx))
         if match:
             used.add(match["id"])
 
@@ -437,7 +487,10 @@ def render(pinned, entries, index):
         if window["id"] in used:
             continue
         icon = icon_for_window(window, entries, index)
-        result.append(button(window["title"], icon, f"i3-msg '[con_id={window['id']}] focus'", "running open"))
+        desktop = app_for_window(window, entries, index)
+        ctx = ctx_cmd(window["id"], window["class"], desktop["stem"] if desktop else "",
+                      "", False, True)
+        result.append(button(window["title"], icon, f"i3-msg '[con_id={window['id']}] focus'", "running open", ctx))
 
     print('(box :class "taskbar" :space-evenly false ' + " ".join(result) + ')')
     sys.stdout.flush()
@@ -445,8 +498,7 @@ def render(pinned, entries, index):
 
 def main():
     global THEME_CHAIN
-    with open(PINNED, encoding="utf-8") as file:
-        pinned = json.load(file)
+    pinned = load_pinned(force=True)
     entries = [entry for path in desktop_files() if (entry := desktop_info(path))]
     index = build_index(entries)
     THEME_CHAIN = theme_chain(gtk_theme_name())
@@ -466,7 +518,7 @@ def main():
             needed.append(desktop["icon"])
     prefetch_icon_names(needed)
 
-    render(pinned, entries, index)
+    render(entries, index)
     if "--listen" not in sys.argv:
         return
 
@@ -480,7 +532,7 @@ def main():
     try:
         for _event in subscription.stdout:
             time.sleep(0.08)
-            render(pinned, entries, index)
+            render(entries, index)
     finally:
         subscription.terminate()
 

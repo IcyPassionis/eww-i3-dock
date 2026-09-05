@@ -2,6 +2,13 @@
   :initial "(box)"
   "/home/boncuk/.config/eww/dock-apps.py --listen")
 
+; Context-menu popover state. Set by dock-ctx.sh on right-click, cleared by
+; dock-menu.sh after an action and by the show/hide scripts on transitions.
+(defvar menu-open false)
+(defvar menu-pinned false)
+(defvar menu-running false)
+(defvar menu-has-desktop false)
+
 (defwindow dock_open_area
   :monitor 0
   :geometry (geometry :x "0px" :y "0px" :width "760px" :height "4px" :anchor "bottom center")
@@ -29,5 +36,17 @@
     (eventbox
       :onhover "/home/boncuk/.config/eww/dock-cancel-hide.sh"
       :onhoverlost "/home/boncuk/.config/eww/dock-schedule-hide.sh"
-      (box :class "dock-main" :space-evenly false :hexpand false
-        (literal :content app-buttons)))))
+      (box :orientation "vertical" :space-evenly false
+        ; Right-click popover: revealed above the icons, inside the dock
+        ; window so interacting with it keeps the hover veto alive.
+        (revealer :reveal menu-open :transition "slideup" :duration "150ms"
+          (box :class "ctx-menu" :space-evenly false :halign "center"
+            (button :class "ctx-item" :timeout "5s"
+              :visible menu-has-desktop
+              :onclick "/home/boncuk/.config/eww/dock-menu.sh pin"
+              {menu-pinned ? "Unpin from dock" : "Pin to dock"})
+            (button :class "ctx-item" :timeout "5s"
+              :onclick "/home/boncuk/.config/eww/dock-menu.sh closeopen"
+              {menu-running ? "Close window" : "Open"})))
+        (box :class "dock-main" :space-evenly false :hexpand false
+          (literal :content app-buttons))))))

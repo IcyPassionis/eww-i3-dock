@@ -1,0 +1,7 @@
+[
+  {"name": "Firefox", "desktop": "firefox.desktop", "match": "firefox", "command": "gtk-launch firefox.desktop"},
+  {"name": "Terminal", "desktop": "kitty.desktop", "match": "kitty|alacritty|xterm|gnome-terminal", "command": "i3-sensible-terminal"},
+  {"name": "Nemo", "desktop": "nemo.desktop", "match": "nemo", "command": "gtk-launch nemo.desktop"},
+  {"name": "Discord", "desktop": "discord.desktop", "match": "discord", "command": "gtk-launch discord.desktop"},
+  {"name": "Steam", "desktop": "steam.desktop", "match": "steam", "command": "gtk-launch steam.desktop"}
+]
