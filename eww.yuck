@@ -1,20 +1,16 @@
-(defvar dock_hovered false)
-(defvar dock_pseudo_hovered false)
-
 (deflisten app-buttons
   :initial "(box)"
   "/home/boncuk/.config/eww/dock-apps.py --listen")
 
 (defwindow dock_open_area
   :monitor 0
-  :geometry (geometry :x "0px" :y "-2px" :width "760px" :height "18px" :anchor "bottom center")
+  :geometry (geometry :x "0px" :y "0px" :width "760px" :height "4px" :anchor "bottom center")
   :stacking "fg"
   :windowtype "dock"
   :wm-ignore true
   :class "dock-open-area"
   (eventbox
-    :onhover "eww update dock_pseudo_hovered=true"
-    :onhoverlost "eww update dock_pseudo_hovered=false"
+    :onhover "/home/boncuk/.config/eww/dock-show.sh"
     (box :class "dock-trigger")))
 
 (defwindow dock
@@ -27,11 +23,11 @@
   (revealer
     :halign "center"
     :valign "end"
-    :reveal {dock_pseudo_hovered || dock_hovered}
+    :reveal true
     :transition "slideup"
     :duration "220ms"
     (eventbox
-    :onhover "eww update dock_hovered=true && eww update dock_pseudo_hovered=false"
-      :onhoverlost "eww update dock_hovered=false && eww update dock_pseudo_hovered=false"
+      :onhover "/home/boncuk/.config/eww/dock-cancel-hide.sh"
+      :onhoverlost "/home/boncuk/.config/eww/dock-schedule-hide.sh"
       (box :class "dock-main" :space-evenly false :hexpand false
         (literal :content app-buttons)))))
