@@ -15,7 +15,7 @@ sleep 0.3
 AFTER=$(cat "$SEQ" 2>/dev/null || echo 0)
 [ "$BEFORE" = "$AFTER" ] || exit 0
 # Dismiss a stale popover with the dock (its hover veto only fires inside).
-eww update menu-open=false >/dev/null 2>&1 || true
+eww update menu-open=false menu-move-open=false >/dev/null 2>&1 || true
 # Guard both transitions with active-windows like dock-show.sh (an `eww open`
 # on an already-open window hangs wedged; a close on a closed one just errs).
 # `eww open` occasionally never replies either; bound it with timeout -k.

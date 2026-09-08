@@ -8,6 +8,9 @@
 (defvar menu-pinned false)
 (defvar menu-running false)
 (defvar menu-has-desktop false)
+; Submenu state for "Move to workspace". Reset alongside menu-open everywhere
+; (ctx open, menu action, show/hide transitions) so it never opens stale.
+(defvar menu-move-open false)
 
 (defwindow dock_open_area
   :monitor 0
@@ -40,13 +43,37 @@
         ; Right-click popover: revealed above the icons, inside the dock
         ; window so interacting with it keeps the hover veto alive.
         (revealer :reveal menu-open :transition "slideup" :duration "150ms"
-          (box :class "ctx-menu" :space-evenly false :halign "center"
+          (box :class "ctx-menu" :orientation "vertical" :space-evenly false :halign "center"
             (button :class "ctx-item" :timeout "5s"
               :visible menu-has-desktop
               :onclick "/home/boncuk/.config/eww/dock-menu.sh pin"
               {menu-pinned ? "Unpin from dock" : "Pin to dock"})
             (button :class "ctx-item" :timeout "5s"
               :onclick "/home/boncuk/.config/eww/dock-menu.sh closeopen"
-              {menu-running ? "Close window" : "Open"})))
+              {menu-running ? "Close window" : "Open"})
+            ; Numbered workspaces only (1-10): i3 maps `workspace number N`
+            ; onto `N: name` variants, so named-numbered setups just work.
+            ; Pure-named workspaces (no leading number) are not listed.
+            ; Move section wrapped in a single :visible gate: eww 0.5 does not
+            ; honour the same var in two :visible bindings (button + grid
+            ; each gated separately never painted), so gate once here.
+            (box :orientation "vertical" :space-evenly false :visible menu-running
+              (button :class "ctx-item" :timeout "5s"
+                :onclick "/home/boncuk/.config/eww/dock-move-toggle.sh"
+                {menu-move-open ? "Move to workspace ▾" : "Move to workspace ▸"})
+              (revealer :reveal menu-move-open :transition "slideup" :duration "150ms"
+                ; Even spread suits a 1-10 strip (and keeps it clear of the
+                ; left edge under the centered text rows above).
+                (box :class "ws-grid" :space-evenly true :halign "center"
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 1" "1")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 2" "2")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 3" "3")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 4" "4")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 5" "5")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 6" "6")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 7" "7")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 8" "8")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 9" "9")
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 10" "10"))))))
         (box :class "dock-main" :space-evenly false :hexpand false
           (literal :content app-buttons))))))

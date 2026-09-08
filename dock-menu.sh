@@ -1,7 +1,11 @@
 #!/bin/sh
 # Context-menu actions for the dock popover. Reads the context stored by
 # dock-ctx.sh, performs the action, then closes the menu.
-# Usage: dock-menu.sh pin|closeopen
+# Usage: dock-menu.sh pin|closeopen|moveto <1-10>
+#
+# moveto moves the right-clicked window with i3-msg by workspace *number*:
+# i3 maps `workspace number N` onto `N: name` variants, so numbered-named
+# setups work; pure-named workspaces (no leading number) are not offered.
 #
 # NOTE: detached like the other widget commands (eww kills slow ones, and
 # launching an app certainly outlives the 200ms default widget timeout).
@@ -9,7 +13,7 @@ if [ -z "$DOCK_MENU_DETACHED" ]; then
   DOCK_MENU_DETACHED=1 setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &
   exit 0
 fi
-python3 - "$1" <<'PYEOF' >/dev/null 2>&1
+python3 - "$@" <<'PYEOF' >/dev/null 2>&1
 import configparser, json, os, re, subprocess, sys
 
 CTX = "/tmp/eww-dock-menu.json"
@@ -17,6 +21,7 @@ PINNED = os.path.expanduser("~/.config/eww/pinned-apps.json")
 APP_DIRS = (os.path.expanduser("~/.local/share/applications"), "/usr/share/applications")
 
 action = sys.argv[1] if len(sys.argv) > 1 else ""
+target = sys.argv[2] if len(sys.argv) > 2 else ""
 
 try:
     with open(CTX, encoding="utf-8") as file:
@@ -26,7 +31,7 @@ except (OSError, json.JSONDecodeError):
 
 
 def close_menu():
-    subprocess.run(["eww", "update", "menu-open=false"],
+    subprocess.run(["eww", "update", "menu-open=false", "menu-move-open=false"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
@@ -93,11 +98,24 @@ def close_or_open():
                          stdin=subprocess.DEVNULL)
 
 
+def move_to_workspace(number):
+    # Strict allowlist: buttons only ever send 1-10, anything else is dropped.
+    if number not in {str(n) for n in range(1, 11)}:
+        return
+    con = ctx.get("con") or ""
+    if not re.fullmatch(r"\d+", con):
+        return
+    subprocess.run(["i3-msg", f"[con_id={con}] move container to workspace number {number}"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
 try:
     if action == "pin":
         toggle_pin()
     elif action == "closeopen":
         close_or_open()
+    elif action == "moveto":
+        move_to_workspace(target)
 finally:
     close_menu()
 PYEOF

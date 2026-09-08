@@ -89,6 +89,27 @@ window,
   background: rgba(125, 46, 107, 0.95);
 }
 
+.ws-grid {
+  margin: 2px 4px 4px 4px;
+}
+
+.ws-item {
+  min-width: 30px;
+  margin: 2px;
+  padding: 4px 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #DDFFFF;
+}
+
+.ws-item:hover {
+  background: rgba(93, 36, 84, 0.95);
+}
+
+.ws-item:active {
+  background: rgba(125, 46, 107, 0.95);
+}
+
 .dock-open-area {
   min-height: 4px;
 }

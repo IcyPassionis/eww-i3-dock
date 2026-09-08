@@ -35,7 +35,7 @@ if eww active-windows 2>/dev/null | grep -q ': dock$'; then
   eww close dock_open_area >/dev/null 2>&1 || true
 else
   bump_seq
-  eww update menu-open=false >/dev/null 2>&1 || true
+  eww update menu-open=false menu-move-open=false >/dev/null 2>&1 || true
   show_open
   eww close dock_open_area >/dev/null 2>&1 || true
 fi
