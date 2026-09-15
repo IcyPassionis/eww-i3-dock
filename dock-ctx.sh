@@ -19,7 +19,7 @@ PYEOF
 if [ "$PINNED" = "1" ]; then P=true; else P=false; fi
 if [ "$RUNNING" = "1" ]; then R=true; else R=false; fi
 if [ -n "$DESK" ]; then H=true; else H=false; fi
-eww update menu-open=true "menu-pinned=$P" "menu-running=$R" "menu-has-desktop=$H" >/dev/null 2>&1 || true
+eww update menu-open=true "menu-pinned=$P" "menu-running=$R" "menu-has-desktop=$H" menu-move-open=false >/dev/null 2>&1 || true
 # Veto a pending hide (fd-based flock: flock -c would run $SHELL, e.g. fish).
 exec 9>/tmp/eww-dock-seq.lock
 flock 9
