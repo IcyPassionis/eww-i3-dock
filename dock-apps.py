@@ -23,6 +23,7 @@ PIXMAPS = "/usr/share/pixmaps"
 IMAGE_EXTS = (".svg", ".png", ".xpm")
 XICON_DIR = os.path.expanduser("~/.cache/eww/icons")
 ICON_CACHE = {}
+FULLSCREEN_SCRIPT = "/home/boncuk/.config/eww/dock-fullscreen.sh"
 
 # Active GTK theme + inheritance, resolved once at startup (cheap: a few
 # small text files, never per render).
@@ -391,12 +392,99 @@ def icon_for_window(window, entries, index):
     return found
 
 
-def current_windows():
+def _fullscreen_mode(node):
+    try:
+        return int(node.get("fullscreen_mode", 0) or 0)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def tree_has_window_fullscreen(node, mode=None):
+    """Return whether an X11 window has the requested fullscreen mode."""
+    if not isinstance(node, dict):
+        return False
+    current = _fullscreen_mode(node)
+    if node.get("window") is not None and current > 0 and (mode is None or current == mode):
+        return True
+    return any(tree_has_window_fullscreen(child, mode)
+               for child in (node.get("nodes") or []) + (node.get("floating_nodes") or []))
+
+
+def fullscreen_on_output(tree, output_index, workspaces=None):
+    """Return whether an output or global fullscreen suppresses the dock."""
+    if tree_has_window_fullscreen(tree, mode=2):
+        return True
+    outputs = [node for node in (tree.get("nodes") or [])
+               if isinstance(node, dict)
+               and node.get("type") == "output"
+               and node.get("name") != "__i3"]
+    if not isinstance(output_index, int) or output_index < 0 or output_index >= len(outputs):
+        return False
+    if workspaces is None:
+        return False
+    output_name = outputs[output_index].get("name")
+    visible_ids = {
+        workspace.get("id")
+        for workspace in workspaces
+        if isinstance(workspace, dict)
+        and workspace.get("output") == output_name
+        and workspace.get("visible") is True
+    }
+    return tree_has_fullscreen_in_workspaces(outputs[output_index], visible_ids)
+
+
+def tree_has_fullscreen_in_workspaces(node, workspace_ids):
+    if not isinstance(node, dict):
+        return False
+    if node.get("type") == "workspace":
+        return node.get("id") in workspace_ids and tree_has_window_fullscreen(node)
+    return any(tree_has_fullscreen_in_workspaces(child, workspace_ids)
+               for child in (node.get("nodes") or []) + (node.get("floating_nodes") or []))
+
+
+def fullscreen_transition(previous, current):
+    """Return the lifecycle action needed for a known fullscreen transition."""
+    if current is None or current == previous:
+        return None
+    return "suppress" if current else "restore"
+
+
+def sync_fullscreen(action):
+    """Ask the lifecycle helper to apply a fullscreen transition."""
+    script = os.environ.get("DOCK_FULLSCREEN_SCRIPT", FULLSCREEN_SCRIPT)
+    try:
+        return subprocess.run(
+            [script, action],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+
+
+def current_tree():
     try:
         raw = subprocess.check_output(["i3-msg", "-t", "get_tree"], text=True)
-        return list(tree_windows(json.loads(raw)))
+        return json.loads(raw)
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-        return []
+        return None
+
+
+def current_workspaces():
+    try:
+        raw = subprocess.check_output(["i3-msg", "-t", "get_workspaces"], text=True)
+        return json.loads(raw)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+
+
+def current_windows(tree=None):
+    if tree is None:
+        tree = current_tree()
+    return list(tree_windows(tree)) if tree else []
 
 
 def load_pinned(force=False):
@@ -457,9 +545,9 @@ def button(name, icon, action, classes, ctx=None):
     )
 
 
-def render(entries, index):
+def render(entries, index, tree=None):
     pinned = load_pinned()
-    windows = current_windows()
+    windows = current_windows(tree)
 
     result = [button("Uygulamalar", LAUNCHER_ICON, "rofi -modi drun,run -show drun", "launcher")]
     used = set()
@@ -498,6 +586,13 @@ def render(entries, index):
 
 def main():
     global THEME_CHAIN
+    if "--fullscreen" in sys.argv:
+        tree = current_tree()
+        workspaces = current_workspaces()
+        print("unknown" if tree is None or workspaces is None else
+              "true" if fullscreen_on_output(tree, 0, workspaces) else "false")
+        return
+
     pinned = load_pinned(force=True)
     entries = [entry for path in desktop_files() if (entry := desktop_info(path))]
     index = build_index(entries)
@@ -506,7 +601,13 @@ def main():
     # renders afterwards are cache hits. Prefetching ALL .desktop icons would
     # mean thousands of -iname patterns per file visited (~27s), so scope it.
     needed = []
-    windows = current_windows()
+    tree = current_tree()
+    windows = current_windows(tree)
+    workspaces = current_workspaces()
+    fullscreen_state = (fullscreen_on_output(tree, 0, workspaces)
+                        if tree is not None and workspaces is not None else None)
+    if action := fullscreen_transition(None, fullscreen_state):
+        sync_fullscreen(action)
     for item in pinned:
         desktop = next((entry for entry in entries
                         if entry["stem"] == item.get("desktop", "").removesuffix(".desktop").lower()), None)
@@ -518,21 +619,29 @@ def main():
             needed.append(desktop["icon"])
     prefetch_icon_names(needed)
 
-    render(entries, index)
+    render(entries, index, tree)
     if "--listen" not in sys.argv:
         return
 
     # i3 sends one line per window/workspace event.  Keeping this process alive
     # avoids rescanning icons and rebuilding the widget every second.
     subscription = subprocess.Popen(
-        ["i3-msg", "-t", "subscribe", "-m", '["window", "workspace"]'],
+        ["i3-msg", "-t", "subscribe", "-m", '["window", "workspace", "output"]'],
         stdout=subprocess.PIPE,
         text=True,
     )
     try:
         for _event in subscription.stdout:
             time.sleep(0.08)
-            render(entries, index)
+            tree = current_tree()
+            workspaces = current_workspaces()
+            current = (fullscreen_on_output(tree, 0, workspaces)
+                       if tree is not None and workspaces is not None else None)
+            if action := fullscreen_transition(fullscreen_state, current):
+                sync_fullscreen(action)
+            if current is not None:
+                fullscreen_state = current
+            render(entries, index, tree)
     finally:
         subscription.terminate()
 

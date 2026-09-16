@@ -9,6 +9,7 @@ if [ -z "$DOCK_SHOW_DETACHED" ]; then
   exit 0
 fi
 EWW=${DOCK_EWW_BIN:-eww}
+DOCK_APP_SCRIPT=${DOCK_APP_SCRIPT:-/home/boncuk/.config/eww/dock-apps.py}
 RUNTIME_DIR=${DOCK_RUNTIME_DIR:-/tmp}
 LOCKFILE="$RUNTIME_DIR/eww-dock-show.lock"
 SEQ_LOCK="$RUNTIME_DIR/eww-dock-seq.lock"
@@ -23,6 +24,13 @@ mkdir -p "$RUNTIME_DIR"
 # later show until manually removed.)
 exec 9>"$LOCKFILE"
 flock -n 9 || exit 0
+
+# A confirmed fullscreen state wins over hover. `unknown` is intentionally
+# allowed through so a transient i3 IPC failure does not make the dock unusable.
+if [ "$(python3 "$DOCK_APP_SCRIPT" --fullscreen 2>/dev/null)" = true ]; then
+  exit 0
+fi
+
 # `eww open` occasionally never replies ("channel closed" in the daemon log);
 # bound it so a hung open cannot wedge the show path — next hover retries.
 # (-k: eww ignores SIGTERM while wedged, so escalate to KILL.)
