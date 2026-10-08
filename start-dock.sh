@@ -1,63 +1,45 @@
 #!/bin/sh
+. "$(dirname -- "$0")/dock-common.sh"
 
-EWW=${DOCK_EWW_BIN:-eww}
-RUNTIME_DIR=${DOCK_RUNTIME_DIR:-/tmp}
-SEQ="$RUNTIME_DIR/eww-dock-seq"
-SEQ_LOCK="$RUNTIME_DIR/eww-dock-seq.lock"
-TRANSITION_LOCK="$RUNTIME_DIR/eww-dock-show.lock"
-CONFIRM_ATTEMPTS=${DOCK_CONFIRM_ATTEMPTS:-50}
-CONFIRM_DELAY=${DOCK_CONFIRM_DELAY:-0.1}
+# Invalidate old timers, then wait only briefly for a running transition.
+# Concurrent i3 reloads must return rather than form an unbounded queue.
+dock_bump_seq || exit 1
+dock_lock "$DOCK_LOCK_TIMEOUT" || exit 1
+fullscreen_request=$(dock_read_request) || exit 1
+fullscreen=$(dock_run python3 "$DOCK_APP_SCRIPT" --fullscreen 2>/dev/null) || fullscreen=unknown
+dock_refresh_fullscreen "$fullscreen" "$fullscreen_request" || exit 1
 
-mkdir -p "$RUNTIME_DIR"
-
-# Invalidate any pending delayed hide from a previous session.
-# Descriptor 8 stays distinct from the lifetime transition lock on 9.
-exec 8>"$SEQ_LOCK"
-flock 8
-n=$(cat "$SEQ" 2>/dev/null || echo 0)
-echo $((n + 1)) > "$SEQ"
-flock -u 8
-exec 8>&-
-
-# Startup and hover/hide swaps share one lock, preventing a trigger created
-# during startup from launching a competing show transition.
-exec 9>"$TRANSITION_LOCK"
-flock 9
-
-window_active() {
-  "$EWW" active-windows 2>/dev/null | grep -q ": $1\$"
-}
 wait_for_daemon() {
   attempts=$CONFIRM_ATTEMPTS
   while [ "$attempts" -gt 0 ]; do
-    "$EWW" active-windows >/dev/null 2>&1 && return 0
+    dock_eww active-windows >/dev/null 2>&1 && return 0
     attempts=$((attempts - 1))
-    sleep "$CONFIRM_DELAY"
-  done
-  return 1
-}
-wait_for_window() {
-  window=$1
-  attempts=$CONFIRM_ATTEMPTS
-  while [ "$attempts" -gt 0 ]; do
-    window_active "$window" && return 0
-    attempts=$((attempts - 1))
-    sleep "$CONFIRM_DELAY"
+    [ "$attempts" -gt 0 ] && dock_pause "$CONFIRM_DELAY"
   done
   return 1
 }
 
-# The long-lived daemon must not inherit fd 9 or it will hold the transition
-# lock forever and every later hover will lose the non-blocking flock race.
-"$EWW" daemon 9>&- >"$RUNTIME_DIR/eww-dock.log" 2>&1 &
-wait_for_daemon || exit 1
+# The lifetime supervisor owns the foreground daemon and its own flock. It
+# returns for a verified existing owner, even when a short IPC request stalls.
+"$DOCK_SCRIPT_DIR/dock-daemon.sh" ensure || exit 1
+wait_for_daemon || {
+  echo "start-dock: verified Eww owner is not answering IPC" >&2
+  exit 1
+}
 
-# Keep any stale full dock available until its hidden trigger is confirmed.
-if ! window_active dock_open_area; then
-  timeout -k 2 5 "$EWW" open dock_open_area >/dev/null 2>&1 || true
+dock_windows=$(dock_eww active-windows 2>/dev/null) || {
+  echo "start-dock: Eww owner is not answering the window query" >&2
+  exit 1
+}
+if dock_snapshot_has dock; then
+  # A visible dock is already a healthy startup state. Do not recreate it or
+  # briefly reset its context-menu/listener state on i3 reload.
+  if dock_snapshot_has dock_open_area; then dock_eww close dock_open_area >/dev/null 2>&1 || true; fi
+else
+  if ! dock_snapshot_has dock_open_area; then
+    dock_eww open dock_open_area >/dev/null 2>&1 || true
+  fi
+  dock_wait_window dock_open_area || exit 1
 fi
-wait_for_window dock_open_area || exit 1
-
-if window_active dock; then
-  "$EWW" close dock >/dev/null 2>&1 || true
-fi
+dock_reconcile_fullscreen || exit 1
+dock_raise

@@ -20,7 +20,14 @@
   :wm-ignore true
   :class "dock-open-area"
   (eventbox
+    ; Keep the single event-driven listener alive when only the trigger is open.
+    ; The initial (box) is nonempty, so cold-start edge hover remains active.
+    :active {app-buttons != ""}
     :onhover "/home/boncuk/.config/eww/dock-show.sh"
+    ; Record trigger exit against the pending show token. This is only a
+    ; pre-open stale-show hint; it does not replace the show request, because
+    ; Eww can synthesize this crossing when the trigger is swapped for dock.
+    :onhoverlost "/home/boncuk/.config/eww/dock-cancel-hide.sh trigger-left"
     (box :class "dock-trigger")))
 
 (defwindow dock
@@ -44,20 +51,20 @@
         ; window so interacting with it keeps the hover veto alive.
         (revealer :reveal menu-open :transition "slideup" :duration "150ms"
           (box :class "ctx-menu" :orientation "vertical" :space-evenly false :halign "center"
-            (button :class "ctx-item" :timeout "5s"
-              :visible menu-has-desktop
-              :onclick "/home/boncuk/.config/eww/dock-menu.sh pin"
-              {menu-pinned ? "Unpin from dock" : "Pin to dock"})
+            ; Eww 0.5 captures initial :visible on first map. Keep children
+            ; visible and gate layout with nonanimated inner revealers instead.
+            (revealer :reveal menu-has-desktop :transition "none" :duration "0ms"
+              (button :class "ctx-item" :timeout "5s"
+                :onclick "/home/boncuk/.config/eww/dock-menu.sh pin"
+                {menu-pinned ? "Unpin from dock" : "Pin to dock"}))
             (button :class "ctx-item" :timeout "5s"
               :onclick "/home/boncuk/.config/eww/dock-menu.sh closeopen"
               {menu-running ? "Close window" : "Open"})
             ; Numbered workspaces only (1-10): i3 maps `workspace number N`
             ; onto `N: name` variants, so named-numbered setups just work.
             ; Pure-named workspaces (no leading number) are not listed.
-            ; Move section wrapped in a single :visible gate: eww 0.5 does not
-            ; honour the same var in two :visible bindings (button + grid
-            ; each gated separately never painted), so gate once here.
-            (box :orientation "vertical" :space-evenly false :visible menu-running
+            (revealer :reveal menu-running :transition "none" :duration "0ms"
+              (box :orientation "vertical" :space-evenly false
               (button :class "ctx-item" :timeout "5s"
                 :onclick "/home/boncuk/.config/eww/dock-move-toggle.sh"
                 {menu-move-open ? "Move to workspace ▾" : "Move to workspace ▸"})
@@ -74,6 +81,45 @@
                 (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 7" "7")
                 (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 8" "8")
                 (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 9" "9")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 10" "10"))))))
-        (box :class "dock-main" :space-evenly false :hexpand false
-          (literal :content app-buttons))))))
+                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 10" "10")))))))
+        ; Do not paint colored chrome while the listener is prefetching icons.
+        (revealer :reveal {app-buttons != "(box)"} :transition "none" :duration "0ms"
+          ; The viewport bounds the content's minimum width, unlike geometry
+          ; alone. Center the colored child so small taskbars keep a small pill.
+          (scroll :class "dock-scroll" :width 760 :hscroll true :vscroll false
+            (box :class "dock-main" :space-evenly false :hexpand false :halign "center"
+              (literal :content app-buttons))))))))
+
+
+; Small audio popover opened from Polybar's volume indicator.
+(deflisten volume-state
+  :initial "{\"volume\": 50, \"muted\": false}"
+  "/home/boncuk/.config/eww/volume-listen.sh")
+
+(defwidget volume-control []
+  (box :class "volume-card" :orientation "vertical" :space-evenly false
+    (box :class "volume-head" :space-evenly false :valign "center"
+      (box :orientation "vertical" :space-evenly false :hexpand true
+        (label :class "volume-title" :text "Ses düzeyi" :halign "start")
+        (label :class "volume-state-label"
+          :text {volume-state.muted ? "Sessiz" : "Ses çıkışı"}
+          :halign "start"))
+      (button :class {volume-state.muted ? "volume-mute is-muted" : "volume-mute"}
+        :onclick "pactl set-sink-mute @DEFAULT_SINK@ toggle"
+        {volume-state.muted ? "Sesi aç" : "Sessize al"}))
+    (box :class "volume-slider-row" :space-evenly false :valign "center"
+      (scale :class "volume-slider" :min 0 :max 100
+        :value {volume-state.volume}
+        :draw-value false
+        :hexpand true
+        :onchange "pactl set-sink-volume @DEFAULT_SINK@ {}%")
+      (label :class "volume-value" :text "${volume-state.volume}%" :halign "end"))))
+
+(defwindow volume-popup
+  :monitor 0
+  :geometry (geometry :x "0px" :y "0px" :width "292px" :height "112px" :anchor "top left")
+  :stacking "fg"
+  :windowtype "dock"
+  :wm-ignore true
+  :class "volume-popup-window"
+  (volume-control))

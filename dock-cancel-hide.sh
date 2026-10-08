@@ -2,13 +2,12 @@
 # Hovering the already-open dock: only invalidate a pending delayed hide.
 # Deliberately zero IPC (`eww open` on an open window recreates it, which
 # refires onhover under a stationary cursor into a hot loop). May run often.
-bump_seq() {
-  # FD-based flock: runs in this sh (flock -c would use $SHELL, e.g. fish).
-  exec 9>/tmp/eww-dock-seq.lock
-  flock 9
-  n=$(cat /tmp/eww-dock-seq 2>/dev/null || echo 0)
-  echo $((n + 1)) > /tmp/eww-dock-seq
-  flock -u 9
-  exec 9>&-
-}
-bump_seq
+. "$(dirname -- "$0")/dock-common.sh"
+if [ "${1:-}" = trigger-left ]; then
+  # This event can be a synthetic crossing from the trigger being unmapped as
+  # the dock appears. Record it against the current show token without
+  # replacing that intent; the show worker only uses it as a pre-open veto.
+  dock_note_trigger_left
+else
+  dock_bump_seq
+fi

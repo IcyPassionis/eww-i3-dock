@@ -10,14 +10,17 @@
 # NOTE: detached like the other widget commands (eww kills slow ones, and
 # launching an app certainly outlives the 200ms default widget timeout).
 if [ -z "$DOCK_MENU_DETACHED" ]; then
-  DOCK_MENU_DETACHED=1 setsid "$0" "$@" >/dev/null 2>&1 < /dev/null &
+  DOCK_MENU_DETACHED=1 setsid "$0" "$@" 8>&- 9>&- >/dev/null 2>&1 < /dev/null &
   exit 0
 fi
-python3 - "$@" <<'PYEOF' >/dev/null 2>&1
+. "$(dirname -- "$0")/dock-common.sh"
+export DOCK_PINNED_FILE=${DOCK_PINNED_FILE:-$DOCK_SCRIPT_DIR/pinned-apps.json}
+dock_run python3 - "$@" <<'PYEOF' >/dev/null 2>&1
 import configparser, json, os, re, subprocess, sys
 
-CTX = "/tmp/eww-dock-menu.json"
-PINNED = os.path.expanduser("~/.config/eww/pinned-apps.json")
+CTX = os.path.join(os.environ["DOCK_RUNTIME_DIR"], "eww-dock-menu.json")
+PINNED = os.environ["DOCK_PINNED_FILE"]
+IPC_TIMEOUT = float(os.environ.get("DOCK_IPC_TIMEOUT", "1"))
 APP_DIRS = (os.path.expanduser("~/.local/share/applications"), "/usr/share/applications")
 
 action = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -30,9 +33,13 @@ except (OSError, json.JSONDecodeError):
     ctx = {}
 
 
-def close_menu():
-    subprocess.run(["eww", "update", "menu-open=false", "menu-move-open=false"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+def i3_command(command):
+    try:
+        subprocess.run([os.environ.get("DOCK_I3_BIN", "i3-msg"), command],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       check=False, timeout=IPC_TIMEOUT, close_fds=True)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def load_pinned():
@@ -88,8 +95,7 @@ def toggle_pin():
 def close_or_open():
     con = ctx.get("con") or ""
     if re.fullmatch(r"\d+", con):
-        subprocess.run(["i3-msg", f"[con_id={con}] kill"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        i3_command(f"[con_id={con}] kill")
         return
     command = ctx.get("command") or ""
     if command:
@@ -105,17 +111,17 @@ def move_to_workspace(number):
     con = ctx.get("con") or ""
     if not re.fullmatch(r"\d+", con):
         return
-    subprocess.run(["i3-msg", f"[con_id={con}] move container to workspace number {number}"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    i3_command(f"[con_id={con}] move container to workspace number {number}")
 
 
-try:
-    if action == "pin":
-        toggle_pin()
-    elif action == "closeopen":
-        close_or_open()
-    elif action == "moveto":
-        move_to_workspace(target)
-finally:
-    close_menu()
+if action == "pin":
+    toggle_pin()
+elif action == "closeopen":
+    close_or_open()
+elif action == "moveto":
+    move_to_workspace(target)
 PYEOF
+# Always dismiss, including if the action helper exceeds its deadline.
+action_result=$?
+dock_eww update menu-open=false menu-move-open=false >/dev/null 2>&1 || exit 1
+exit "$action_result"

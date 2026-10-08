@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import configparser
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -410,6 +411,68 @@ def tree_has_window_fullscreen(node, mode=None):
                for child in (node.get("nodes") or []) + (node.get("floating_nodes") or []))
 
 
+def output_for_monitor(monitor, outputs):
+    """Match physical GDK identity/geometry, never another API's ordinal."""
+    if not isinstance(monitor, dict) or not isinstance(outputs, list):
+        return None
+    active = [output for output in outputs
+              if isinstance(output, dict) and output.get("active") is True]
+    name = monitor.get("name")
+    if name and any(output.get("name") == name for output in active):
+        return name
+    rect = monitor.get("rect")
+    matches = [output.get("name") for output in active
+               if rect and output.get("rect") == rect]
+    return matches[0] if len(matches) == 1 else None
+
+
+def native_x11():
+    """Load the sibling helper without requiring an importable package."""
+    global _NATIVE_X11
+    if _NATIVE_X11 is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dock-x11.py")
+        spec = importlib.util.spec_from_file_location("dock_x11", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _NATIVE_X11 = module
+    return _NATIVE_X11
+
+
+_NATIVE_X11 = None
+
+
+def dock_monitor():
+    return native_x11().monitor(0)
+
+
+def current_outputs():
+    try:
+        raw = subprocess.check_output(["i3-msg", "-t", "get_outputs"], text=True, timeout=2)
+        outputs = json.loads(raw)
+        return outputs if isinstance(outputs, list) else None
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+
+
+def fullscreen_state(tree, workspaces, output=None):
+    """Unknown topology/IPC fails closed for restacking and hover reveals."""
+    if not isinstance(tree, dict):
+        return None
+    if tree_has_window_fullscreen(tree, mode=2):
+        return True
+    if not isinstance(workspaces, list):
+        return None
+    output = output or os.environ.get("DOCK_OUTPUT")
+    if not output:
+        output = output_for_monitor(dock_monitor(), current_outputs())
+    if not output or not any(node.get("name") == output
+                             for node in tree.get("nodes", [])
+                             if isinstance(node, dict) and node.get("type") == "output"):
+        return None
+    return fullscreen_on_output(tree, output, workspaces)
+
+
 def fullscreen_on_output(tree, output_index, workspaces=None):
     """Return whether an output or global fullscreen suppresses the dock."""
     if tree_has_window_fullscreen(tree, mode=2):
@@ -418,11 +481,16 @@ def fullscreen_on_output(tree, output_index, workspaces=None):
                if isinstance(node, dict)
                and node.get("type") == "output"
                and node.get("name") != "__i3"]
-    if not isinstance(output_index, int) or output_index < 0 or output_index >= len(outputs):
+    # Integer selection remains for legacy fixture/API callers only. Runtime
+    # callers resolve a physical GDK monitor to its output name first.
+    if isinstance(output_index, int):
+        selected = outputs[output_index] if 0 <= output_index < len(outputs) else None
+    else:
+        selected = next((output for output in outputs
+                         if output.get("name") == output_index), None)
+    if selected is None or workspaces is None:
         return False
-    if workspaces is None:
-        return False
-    output_name = outputs[output_index].get("name")
+    output_name = selected.get("name")
     visible_ids = {
         workspace.get("id")
         for workspace in workspaces
@@ -430,7 +498,7 @@ def fullscreen_on_output(tree, output_index, workspaces=None):
         and workspace.get("output") == output_name
         and workspace.get("visible") is True
     }
-    return tree_has_fullscreen_in_workspaces(outputs[output_index], visible_ids)
+    return tree_has_fullscreen_in_workspaces(selected, visible_ids)
 
 
 def tree_has_fullscreen_in_workspaces(node, workspace_ids):
@@ -459,25 +527,29 @@ def sync_fullscreen(action):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            close_fds=True,
+            timeout=2,
             check=False,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
 
 
 def current_tree():
     try:
-        raw = subprocess.check_output(["i3-msg", "-t", "get_tree"], text=True)
-        return json.loads(raw)
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        raw = subprocess.check_output(["i3-msg", "-t", "get_tree"], text=True, timeout=2)
+        tree = json.loads(raw)
+        return tree if isinstance(tree, dict) else None
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
         return None
 
 
 def current_workspaces():
     try:
-        raw = subprocess.check_output(["i3-msg", "-t", "get_workspaces"], text=True)
-        return json.loads(raw)
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        raw = subprocess.check_output(["i3-msg", "-t", "get_workspaces"], text=True, timeout=2)
+        workspaces = json.loads(raw)
+        return workspaces if isinstance(workspaces, list) else None
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
         return None
 
 
@@ -526,7 +598,7 @@ def ctx_cmd(con, cls, desktop, command, pinned, running):
 
 
 # Dismiss the popover on any left-click (stale menu must not linger).
-CLOSE_MENU = "; eww update menu-open=false >/dev/null 2>&1 || true"
+CLOSE_MENU = "; /home/boncuk/.config/eww/dock-menu.sh dismiss >/dev/null 2>&1 || true"
 
 
 def button(name, icon, action, classes, ctx=None):
@@ -545,7 +617,7 @@ def button(name, icon, action, classes, ctx=None):
     )
 
 
-def render(entries, index, tree=None):
+def render(entries, index, tree=None, previous=None):
     pinned = load_pinned()
     windows = current_windows(tree)
 
@@ -580,17 +652,87 @@ def render(entries, index, tree=None):
                       "", False, True)
         result.append(button(window["title"], icon, f"i3-msg '[con_id={window['id']}] focus'", "running open", ctx))
 
-    print('(box :class "taskbar" :space-evenly false ' + " ".join(result) + ')')
-    sys.stdout.flush()
+    literal = '(box :class "taskbar" :space-evenly false ' + " ".join(result) + ')'
+    if literal != previous:
+        print(literal, flush=True)
+    return literal
+
+
+def raise_docks(tree=None, workspaces=None):
+    """Restack only with a freshly known, nonfullscreen target output."""
+    tree = current_tree() if tree is None else tree
+    workspaces = current_workspaces() if workspaces is None else workspaces
+    if fullscreen_state(tree, workspaces) is not False:
+        return 0
+    return native_x11().raise_docks()
+
+
+def i3_events():
+    """Block on events, reconnect on EOF with capped exponential backoff."""
+    delay = 0.1
+    while True:
+        subscription = None
+        try:
+            subscription = subprocess.Popen(
+                ["i3-msg", "-t", "subscribe", "-m", '["window", "workspace", "output"]'],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, text=True, close_fds=True,
+            )
+            assert subscription.stdout is not None
+            # `i3-msg subscribe -m` emits monitor events, not the raw IPC
+            # subscription acknowledgement. Read the stream directly: waiting
+            # for an ack here discards the first real event and reconnects on
+            # quiet desktops before any event arrives.
+            for line in subscription.stdout:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict) and "change" in event:
+                    delay = 0.1
+                    yield event
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+            pass
+        finally:
+            if subscription is not None:
+                subscription.terminate()
+                try:
+                    subscription.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    subscription.kill()
+                    subscription.wait(timeout=1)
+                if subscription.stdout is not None:
+                    subscription.stdout.close()
+        time.sleep(delay)
+        delay = min(delay * 2, 2)
+
+
+def listen(entries, index, previous=None):
+    for _event in i3_events():
+        tree = current_tree()
+        workspaces = current_workspaces()
+        current = fullscreen_state(tree, workspaces)
+        # The detached helper acknowledges enqueueing, not application. Always
+        # reconcile the latest desired state on events; never remember a lost
+        # lock-contention request as already applied.
+        if current is not None:
+            sync_fullscreen("suppress" if current else "restore")
+        if current is False:
+            raise_docks()  # Fresh fullscreen check after helper IPC.
+        if tree is not None:
+            previous = render(entries, index, tree, previous=previous)
 
 
 def main():
     global THEME_CHAIN
+    if "--raise" in sys.argv:
+        raise_docks()
+        return
     if "--fullscreen" in sys.argv:
         tree = current_tree()
         workspaces = current_workspaces()
-        print("unknown" if tree is None or workspaces is None else
-              "true" if fullscreen_on_output(tree, 0, workspaces) else "false")
+        state = fullscreen_state(tree, workspaces)
+        print("unknown" if state is None else "true" if state else "false")
         return
 
     pinned = load_pinned(force=True)
@@ -603,11 +745,13 @@ def main():
     needed = []
     tree = current_tree()
     windows = current_windows(tree)
-    workspaces = current_workspaces()
-    fullscreen_state = (fullscreen_on_output(tree, 0, workspaces)
-                        if tree is not None and workspaces is not None else None)
-    if action := fullscreen_transition(None, fullscreen_state):
-        sync_fullscreen(action)
+    if "--listen" in sys.argv:
+        workspaces = current_workspaces()
+        current = fullscreen_state(tree, workspaces)
+        if current is not None:
+            sync_fullscreen("suppress" if current else "restore")
+        if current is False:
+            raise_docks()
     for item in pinned:
         desktop = next((entry for entry in entries
                         if entry["stem"] == item.get("desktop", "").removesuffix(".desktop").lower()), None)
@@ -619,31 +763,9 @@ def main():
             needed.append(desktop["icon"])
     prefetch_icon_names(needed)
 
-    render(entries, index, tree)
-    if "--listen" not in sys.argv:
-        return
-
-    # i3 sends one line per window/workspace event.  Keeping this process alive
-    # avoids rescanning icons and rebuilding the widget every second.
-    subscription = subprocess.Popen(
-        ["i3-msg", "-t", "subscribe", "-m", '["window", "workspace", "output"]'],
-        stdout=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        for _event in subscription.stdout:
-            time.sleep(0.08)
-            tree = current_tree()
-            workspaces = current_workspaces()
-            current = (fullscreen_on_output(tree, 0, workspaces)
-                       if tree is not None and workspaces is not None else None)
-            if action := fullscreen_transition(fullscreen_state, current):
-                sync_fullscreen(action)
-            if current is not None:
-                fullscreen_state = current
-            render(entries, index, tree)
-    finally:
-        subscription.terminate()
+    previous = render(entries, index, tree)
+    if "--listen" in sys.argv:
+        listen(entries, index, previous=previous)
 
 
 if __name__ == "__main__":

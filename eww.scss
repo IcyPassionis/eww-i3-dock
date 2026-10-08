@@ -15,11 +15,33 @@ window,
   min-width: 1px;
   margin: 0 24px 8px 24px;
   padding: 6px 8px;
-  background: rgba(57, 20, 50, 0.90);
-  border: 2px solid rgba(30, 10, 26, 0.90);
+  background: rgba(15, 29, 48, 0.78);
+  border: 2px solid rgba(153, 183, 213, 0.22);
   border-radius: 24px;
-  box-shadow: 0 2px 12px 2px rgba(0, 0, 0, 0.25);
-  color: #DDFFFF;
+  box-shadow: 0 2px 12px 2px rgba(0, 8, 20, 0.22);
+  color: #DCE8F4;
+}
+
+.dock-scroll scrollbar.horizontal {
+  min-height: 4px;
+  margin: 0 24px 2px;
+}
+
+.dock-scroll scrollbar.horizontal trough {
+  min-height: 4px;
+  border-radius: 2px;
+  background: rgba(190, 211, 232, 0.14);
+}
+
+.dock-scroll scrollbar.horizontal slider {
+  min-width: 28px;
+  min-height: 4px;
+  border-radius: 2px;
+  background: rgba(153, 183, 213, 0.48);
+}
+
+.dock-scroll scrollbar.horizontal slider:hover {
+  background: rgba(175, 203, 232, 0.70);
 }
 
 .taskbar {
@@ -33,7 +55,7 @@ window,
   padding: 2px;
   border-radius: 14px;
   background: transparent;
-  color: #DDFFFF;
+  color: #DCE8F4;
 }
 
 .entry:hover {
@@ -41,15 +63,15 @@ window,
   min-height: 48px;
   margin-top: -6px;
   border-radius: 16px;
-  background: rgba(93, 36, 84, 0.95);
+  background: rgba(72, 103, 139, 0.66);
 }
 
 .entry:active {
-  background: rgba(125, 46, 107, 0.95);
+  background: rgba(94, 130, 169, 0.74);
 }
 
 .entry.open {
-  border-bottom: 2px solid #8fffff;
+  border-bottom: 2px solid #AFCBE8;
 }
 
 .entry .icon {
@@ -60,17 +82,17 @@ window,
 .separator {
   min-width: 1px;
   margin: 8px 5px;
-  background: rgba(221, 255, 255, 0.28);
+  background: rgba(190, 211, 232, 0.24);
 }
 
 .ctx-menu {
   margin: 0 24px 6px 24px;
   padding: 6px;
-  background: rgba(57, 20, 50, 0.95);
-  border: 2px solid rgba(30, 10, 26, 0.90);
+  background: rgba(18, 32, 51, 0.88);
+  border: 2px solid rgba(153, 183, 213, 0.22);
   border-radius: 16px;
-  box-shadow: 0 2px 12px 2px rgba(0, 0, 0, 0.25);
-  color: #DDFFFF;
+  box-shadow: 0 2px 12px 2px rgba(0, 8, 20, 0.22);
+  color: #DCE8F4;
 }
 
 .ctx-item {
@@ -78,15 +100,15 @@ window,
   padding: 6px 14px;
   border-radius: 10px;
   background: transparent;
-  color: #DDFFFF;
+  color: #DCE8F4;
 }
 
 .ctx-item:hover {
-  background: rgba(93, 36, 84, 0.95);
+  background: rgba(72, 103, 139, 0.66);
 }
 
 .ctx-item:active {
-  background: rgba(125, 46, 107, 0.95);
+  background: rgba(94, 130, 169, 0.74);
 }
 
 .ws-grid {
@@ -99,15 +121,15 @@ window,
   padding: 4px 0;
   border-radius: 8px;
   background: transparent;
-  color: #DDFFFF;
+  color: #DCE8F4;
 }
 
 .ws-item:hover {
-  background: rgba(93, 36, 84, 0.95);
+  background: rgba(72, 103, 139, 0.66);
 }
 
 .ws-item:active {
-  background: rgba(125, 46, 107, 0.95);
+  background: rgba(94, 130, 169, 0.74);
 }
 
 .dock-open-area {
@@ -117,4 +139,92 @@ window,
 .dock-trigger {
   min-height: 4px;
   background: transparent;
+}
+
+
+/* Compact volume popover, adapted from Eww's scale-based volume examples. */
+.volume-popup-window {
+  background: transparent;
+  color: #DCE8F4;
+  font-family: "SF Pro Display";
+}
+
+.volume-card {
+  margin: 4px;
+  padding: 11px 14px;
+  background: rgba(17, 31, 49, 0.92);
+  border: 1px solid rgba(175, 203, 232, 0.24);
+  border-radius: 16px;
+  box-shadow: 0 5px 18px rgba(0, 8, 20, 0.30);
+  color: #DCE8F4;
+}
+
+.volume-head {
+  min-height: 27px;
+  margin-bottom: 6px;
+}
+
+.volume-title {
+  color: #DCE8F4;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.volume-state-label {
+  margin-top: 2px;
+  color: rgba(190, 211, 232, 0.68);
+  font-size: 10px;
+}
+
+.volume-value {
+  min-width: 38px;
+  color: #BFD2E3;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.volume-mute {
+  margin-left: 10px;
+  padding: 5px 9px;
+  border-radius: 9px;
+  background: rgba(72, 103, 139, 0.28);
+  color: #DCE8F4;
+  font-size: 10px;
+}
+
+.volume-mute:hover {
+  background: rgba(94, 130, 169, 0.48);
+}
+
+.volume-mute.is-muted {
+  background: rgba(94, 130, 169, 0.60);
+  color: #E7F0F8;
+}
+
+.volume-slider-row {
+  min-height: 24px;
+}
+
+.volume-slider {
+  margin: 0 8px;
+}
+
+.volume-slider trough {
+  min-height: 5px;
+  border-radius: 5px;
+  background: rgba(190, 211, 232, 0.18);
+}
+
+.volume-slider highlight {
+  border-radius: 5px;
+  background: #8EABC7;
+}
+
+.volume-slider slider {
+  min-width: 13px;
+  min-height: 13px;
+  border: 1px solid rgba(220, 232, 244, 0.45);
+  border-radius: 50%;
+  background: #C8D8E8;
+  box-shadow: 0 1px 4px rgba(0, 8, 20, 0.30);
 }
