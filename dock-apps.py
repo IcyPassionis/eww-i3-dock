@@ -617,6 +617,39 @@ def button(name, icon, action, classes, ctx=None):
     )
 
 
+# Width model (px) mirroring eww.scss: .entry is 42 min-width + 2x2 padding +
+# 2x2 margin, and :hover adds 6. Chrome is .dock-main margin 2x24 + padding
+# 2x8 + border 2x2 plus .taskbar padding 2x2. Keep these in sync with eww.scss.
+ENTRY_WIDTH = 50
+HOVER_EXTRA = 6
+DOCK_CHROME = 72
+SCREEN_MARGIN = 48
+FALLBACK_MAX_WIDTH = 1280
+_MAX_WIDTH = None
+
+
+def dock_max_width():
+    """Widest dock window for monitor 0; cached until an output event."""
+    global _MAX_WIDTH
+    if _MAX_WIDTH is None:
+        rect = (dock_monitor() or {}).get("rect") or {}
+        width = rect.get("width")
+        if not isinstance(width, int) or width <= SCREEN_MARGIN * 4:
+            return FALLBACK_MAX_WIDTH  # Unknown monitor: do not cache it.
+        _MAX_WIDTH = width - SCREEN_MARGIN
+    return _MAX_WIDTH
+
+
+def dock_literal(taskbar, count, max_width):
+    """Content-sized pill; a fixed-width scroll only when it would overflow."""
+    main = ('(box :class "dock-main" :space-evenly false :hexpand false'
+            ' :halign "center" ' + taskbar + ')')
+    if count * ENTRY_WIDTH + HOVER_EXTRA + DOCK_CHROME <= max_width:
+        return main
+    return ('(scroll :class "dock-scroll" :width ' + str(int(max_width)) +
+            ' :hscroll true :vscroll false ' + main + ')')
+
+
 def render(entries, index, tree=None, previous=None):
     pinned = load_pinned()
     windows = current_windows(tree)
@@ -652,7 +685,8 @@ def render(entries, index, tree=None, previous=None):
                       "", False, True)
         result.append(button(window["title"], icon, f"i3-msg '[con_id={window['id']}] focus'", "running open", ctx))
 
-    literal = '(box :class "taskbar" :space-evenly false ' + " ".join(result) + ')'
+    taskbar = '(box :class "taskbar" :space-evenly false ' + " ".join(result) + ')'
+    literal = dock_literal(taskbar, len(result), dock_max_width())
     if literal != previous:
         print(literal, flush=True)
     return literal
@@ -708,7 +742,11 @@ def i3_events():
 
 
 def listen(entries, index, previous=None):
-    for _event in i3_events():
+    global _MAX_WIDTH
+    for event in i3_events():
+        # Output events carry change "unspecified"; window/workspace never do.
+        if event.get("change") == "unspecified":
+            _MAX_WIDTH = None
         tree = current_tree()
         workspaces = current_workspaces()
         current = fullscreen_state(tree, workspaces)

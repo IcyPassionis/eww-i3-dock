@@ -32,7 +32,11 @@
 
 (defwindow dock
   :monitor 0
-  :geometry (geometry :x "0px" :y "0px" :width "760px" :height "82px" :anchor "bottom center")
+  ; Content-sized: width 1px is only a minimum. With :resizable false GTK
+  ; tracks the content's natural width and Eww 0.5 re-anchors the window to
+  ; bottom center on every resize. dock-apps.py caps it at the monitor width.
+  :geometry (geometry :x "0px" :y "0px" :width "1px" :height "82px" :anchor "bottom center")
+  :resizable false
   :stacking "fg"
   :windowtype "dock"
   :wm-ignore true
@@ -84,11 +88,9 @@
                 (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 10" "10")))))))
         ; Do not paint colored chrome while the listener is prefetching icons.
         (revealer :reveal {app-buttons != "(box)"} :transition "none" :duration "0ms"
-          ; The viewport bounds the content's minimum width, unlike geometry
-          ; alone. Center the colored child so small taskbars keep a small pill.
-          (scroll :class "dock-scroll" :width 760 :hscroll true :vscroll false
-            (box :class "dock-main" :space-evenly false :hexpand false :halign "center"
-              (literal :content app-buttons))))))))
+          ; dock-apps.py emits the colored .dock-main pill, wrapped in a
+          ; monitor-width scroll only when the taskbar would overflow.
+          (literal :content app-buttons))))))
 
 
 ; Small audio popover opened from Polybar's volume indicator.
