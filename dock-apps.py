@@ -14,12 +14,28 @@ import zlib
 PINNED = "/home/boncuk/.config/eww/pinned-apps.json"
 _PINNED = []
 _PINNED_MTIME = None
+PIN_TICK = "dock-pins"  # i3 tick payload meaning "pinned-apps.json changed"
 LAUNCHER_ICON = "/usr/share/icons/Adwaita/symbolic/actions/view-app-grid-symbolic.svg"
+# Flatpak exports are symlink trees. They are tiny, so they get a symlink-aware
+# walk; the big theme trees keep `-type f` (matching their many symlinks costs
+# ~2x on startup, since find then name-tests every link).
+FLATPAK_ICON_BASES = (
+    "/var/lib/flatpak/exports/share/icons",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/icons"),
+)
 ICON_BASES = [
     os.path.expanduser("~/.local/share/icons"),
     os.path.expanduser("~/.icons"),
     "/usr/share/icons",
+    # Flatpak exports (icons/.desktop files of Flatpak apps live only here).
+    *FLATPAK_ICON_BASES,
 ]
+APP_DIRS = (
+    os.path.expanduser("~/.local/share/applications"),
+    "/usr/share/applications",
+    "/var/lib/flatpak/exports/share/applications",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
+)
 PIXMAPS = "/usr/share/pixmaps"
 IMAGE_EXTS = (".svg", ".png", ".xpm")
 XICON_DIR = os.path.expanduser("~/.cache/eww/icons")
@@ -49,7 +65,7 @@ def tree_windows(node):
 
 def desktop_files():
     paths = []
-    for root in (os.path.expanduser("~/.local/share/applications"), "/usr/share/applications"):
+    for root in APP_DIRS:
         paths.extend(glob.glob(os.path.join(root, "*.desktop")))
     return paths
 
@@ -197,25 +213,41 @@ def rank_icon(paths):
     return sorted(paths, key=key)[0]
 
 
+def run_find(directories, conditions):
+    """Icon files under `directories` matching the -iname `conditions`.
+
+    Regular files everywhere; symlinks too, but only under the Flatpak export
+    dirs. Dangling links are dropped. Returns [] if find is unavailable.
+    """
+    hits = []
+    for bases, kinds in (
+        ([d for d in directories if d not in FLATPAK_ICON_BASES], ["-type", "f"]),
+        ([d for d in directories if d in FLATPAK_ICON_BASES],
+         ["(", "-type", "f", "-o", "-type", "l", ")"]),
+    ):
+        bases = [d for d in bases if os.path.isdir(d)]
+        if not bases:
+            continue
+        try:
+            result = subprocess.run(
+                ["find", *bases, *kinds, "(", *conditions, ")", "-print"],
+                capture_output=True, text=True, check=False,
+            )
+        except OSError:
+            continue
+        hits += [line for line in result.stdout.strip().splitlines()
+                 if line and os.path.exists(line)]
+    return hits
+
+
 def find_in_dirs(directories, name):
     """All theme-file hits under the given dirs (small sets, ranked later).
 
-    A single `find` invocation; results are cached in-process in ICON_CACHE
-    so this runs at most once per icon name per listener life.
+    Results are cached in-process in ICON_CACHE so this runs at most once
+    per icon name per listener life.
     """
-    existing = [d for d in directories if os.path.isdir(d)]
-    if not existing:
-        return []
-    try:
-        result = subprocess.run(
-            ["find", *existing, "-type", "f", "(",
-             "-iname", name + ".svg", "-o", "-iname", name + ".png",
-             "-o", "-iname", name + ".xpm", ")", "-print"],
-            capture_output=True, text=True, check=False,
-        )
-    except OSError:
-        return []
-    return [line for line in result.stdout.strip().splitlines() if line]
+    return run_find(directories, ["-iname", name + ".svg", "-o", "-iname", name + ".png",
+                                  "-o", "-iname", name + ".xpm"])
 
 
 def prefetch_icon_names(icon_names):
@@ -240,23 +272,13 @@ def prefetch_icon_names(icon_names):
                        "-iname", name + ".png", "-o",
                        "-iname", name + ".xpm", "-o"]
     conditions.pop()
-    try:
-        result = subprocess.run(
-            ["find", *ICON_BASES, "-type", "f", "(", *conditions, ")", "-print"],
-            capture_output=True, text=True, check=False,
-        )
-    except OSError:
-        result = None
     hits = {}
-    if result is not None:
-        for line in result.stdout.strip().splitlines():
-            if not line:
-                continue
-            stem = strip_image_ext(line).lower()
-            for name in wanted:
-                if stem == name.lower():
-                    hits.setdefault(name, []).append(line)
-                    break
+    for line in run_find(ICON_BASES, conditions):
+        stem = strip_image_ext(line).lower()
+        for name in wanted:
+            if stem == name.lower():
+                hits.setdefault(name, []).append(line)
+                break
     for name in wanted:
         ICON_CACHE[name] = rank_icon(hits[name]) if hits.get(name) else None
 
@@ -708,7 +730,7 @@ def i3_events():
         subscription = None
         try:
             subscription = subprocess.Popen(
-                ["i3-msg", "-t", "subscribe", "-m", '["window", "workspace", "output"]'],
+                ["i3-msg", "-t", "subscribe", "-m", '["window", "workspace", "output", "tick"]'],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL, text=True, close_fds=True,
             )
@@ -722,7 +744,14 @@ def i3_events():
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(event, dict) and "change" in event:
+                if not isinstance(event, dict):
+                    continue
+                # dock-menu.sh sends `i3-msg -t send_tick dock-pins` after it
+                # rewrites pinned-apps.json; i3 also sends a first=true tick
+                # on subscribe, which carries no payload and is ignored.
+                if event.get("payload") == PIN_TICK:
+                    event = {"change": "pins"}
+                if "change" in event:
                     delay = 0.1
                     yield event
         except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):

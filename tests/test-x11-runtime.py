@@ -286,6 +286,19 @@ class ListenerTests(unittest.TestCase):
         process.terminate.assert_called_once()
 
 
+    def test_pin_tick_becomes_render_event_and_subscribe_tick_is_ignored(self):
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        text = '{"first":true,"payload":""}\n{"first":false,"payload":"dock-pins"}\n'
+        process = SimpleNamespace(stdout=io.StringIO(text),
+                                  terminate=Mock(), wait=Mock(), kill=Mock())
+        with patch.object(dock.subprocess, "Popen", return_value=process) as spawn:
+            events = dock.i3_events()
+            self.assertEqual(next(events), {"change": "pins"})
+            events.close()
+        self.assertIn("tick", spawn.call_args.args[0][-1])
+
     def test_main_listen_uses_physical_reconciliation_and_persistent_listener(self):
         from unittest.mock import patch
         tree, visible, outputs = topology()

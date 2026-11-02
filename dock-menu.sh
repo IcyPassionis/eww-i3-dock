@@ -21,7 +21,12 @@ import configparser, json, os, re, subprocess, sys
 CTX = os.path.join(os.environ["DOCK_RUNTIME_DIR"], "eww-dock-menu.json")
 PINNED = os.environ["DOCK_PINNED_FILE"]
 IPC_TIMEOUT = float(os.environ.get("DOCK_IPC_TIMEOUT", "1"))
-APP_DIRS = (os.path.expanduser("~/.local/share/applications"), "/usr/share/applications")
+APP_DIRS = (
+    os.path.expanduser("~/.local/share/applications"),
+    "/usr/share/applications",
+    "/var/lib/flatpak/exports/share/applications",
+    os.path.expanduser("~/.local/share/flatpak/exports/share/applications"),
+)
 
 action = sys.argv[1] if len(sys.argv) > 1 else ""
 target = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -36,6 +41,17 @@ except (OSError, json.JSONDecodeError):
 def i3_command(command):
     try:
         subprocess.run([os.environ.get("DOCK_I3_BIN", "i3-msg"), command],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       check=False, timeout=IPC_TIMEOUT, close_fds=True)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def i3_pin_tick():
+    # Wake dock-apps.py --listen: it only re-renders on i3 events, so without
+    # this a pin/unpin would stay invisible until the next window event.
+    try:
+        subprocess.run([os.environ.get("DOCK_I3_BIN", "i3-msg"), "-t", "send_tick", "dock-pins"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        check=False, timeout=IPC_TIMEOUT, close_fds=True)
     except (OSError, subprocess.TimeoutExpired):
@@ -57,10 +73,24 @@ def save_pinned(items):
         json.dump(items, file, ensure_ascii=False, indent=2)
         file.write("\n")
     os.replace(tmp, PINNED)
+    i3_pin_tick()
 
 
 def stem_of(entry):
     return (entry.get("desktop") or "").removesuffix(".desktop").lower()
+
+
+def find_desktop_file(stem):
+    wanted = stem.lower() + ".desktop"
+    for app_dir in APP_DIRS:
+        try:
+            names = os.listdir(app_dir)
+        except OSError:
+            continue
+        for name in sorted(names):
+            if name.lower() == wanted:
+                return os.path.join(app_dir, name)
+    return None
 
 
 def toggle_pin():
@@ -72,10 +102,12 @@ def toggle_pin():
         save_pinned([entry for entry in items if stem_of(entry) != stem])
         return
     cls = ctx.get("class") or ""
-    desktop_file = next((os.path.join(app_dir, stem + ".desktop") for app_dir in APP_DIRS
-                         if os.path.isfile(os.path.join(app_dir, stem + ".desktop"))), None)
+    desktop_file = find_desktop_file(stem)
     if desktop_file is None:
         return
+    # Keep the file's real case: Flatpak ids (dev.zed.Zed) are case-sensitive
+    # for gtk-launch, while the dock context only carries a lowercased stem.
+    stem = os.path.basename(desktop_file)[:-len(".desktop")]
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.optionxform = str
     try:
