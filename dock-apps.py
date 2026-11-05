@@ -39,6 +39,7 @@ APP_DIRS = (
 PIXMAPS = "/usr/share/pixmaps"
 IMAGE_EXTS = (".svg", ".png", ".xpm")
 XICON_DIR = os.path.expanduser("~/.cache/eww/icons")
+XPROP_MAX_BYTES = 64 * 1024 * 1024
 ICON_CACHE = {}
 FULLSCREEN_SCRIPT = "/home/boncuk/.config/eww/dock-fullscreen.sh"
 
@@ -88,6 +89,17 @@ def desktop_info(path):
         return None
 
 
+def app_dirs_stamp():
+    """Directory mtimes: one stat per APP_DIRS, cheap enough for every event."""
+    stamp = []
+    for root in APP_DIRS:
+        try:
+            stamp.append(os.stat(root).st_mtime_ns)
+        except OSError:
+            stamp.append(None)
+    return tuple(stamp)
+
+
 def norm(value):
     return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
@@ -105,6 +117,11 @@ def build_index(entries):
             if key and key not in index:
                 index[key] = entry
     return index
+
+
+def load_apps():
+    entries = [entry for path in desktop_files() if (entry := desktop_info(path))]
+    return entries, build_index(entries)
 
 
 def app_for_window(window, entries, index):
@@ -382,7 +399,10 @@ def xwin_icon(xwin, key):
         return path
     try:
         result = subprocess.run(
-            ["xprop", "-id", str(xwin), "_NET_WM_ICON"],
+            # Without an explicit format xprop prints no pixels, and its
+            # default length limit cuts a 512px icon (~3 MB of text) short.
+            ["xprop", "-len", str(XPROP_MAX_BYTES), "-id", str(xwin),
+             "-f", "_NET_WM_ICON", "32c", "_NET_WM_ICON"],
             capture_output=True, text=True, timeout=3, check=False,
         )
     except OSError:
@@ -770,9 +790,18 @@ def i3_events():
         delay = min(delay * 2, 2)
 
 
-def listen(entries, index, previous=None):
+def listen(entries, index, previous=None, stamp=None):
     global _MAX_WIDTH
+    stamp = app_dirs_stamp() if stamp is None else stamp
     for event in i3_events():
+        # The listener outlives package installs: rescan when an app dir
+        # changes and retry names that missed, or new apps stay on the fallback.
+        latest = app_dirs_stamp()
+        if latest != stamp:
+            stamp = latest
+            entries, index = load_apps()
+            for name in [name for name, path in ICON_CACHE.items() if path is None]:
+                del ICON_CACHE[name]
         # Output events carry change "unspecified"; window/workspace never do.
         if event.get("change") == "unspecified":
             _MAX_WIDTH = None
@@ -803,8 +832,8 @@ def main():
         return
 
     pinned = load_pinned(force=True)
-    entries = [entry for path in desktop_files() if (entry := desktop_info(path))]
-    index = build_index(entries)
+    stamp = app_dirs_stamp()  # Before the scan: a racing install rescans.
+    entries, index = load_apps()
     THEME_CHAIN = theme_chain(gtk_theme_name())
     # One walk for exactly the icons on screen right now (pinned + running);
     # renders afterwards are cache hits. Prefetching ALL .desktop icons would
@@ -832,7 +861,7 @@ def main():
 
     previous = render(entries, index, tree)
     if "--listen" in sys.argv:
-        listen(entries, index, previous=previous)
+        listen(entries, index, previous=previous, stamp=stamp)
 
 
 if __name__ == "__main__":
