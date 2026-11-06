@@ -231,7 +231,8 @@ dock_reconcile_fullscreen() {
       *' suppress')
         if ! dock_snapshot_has dock_open_area; then
           dock_eww open dock_open_area >/dev/null 2>&1 || true
-          dock_wait_window dock_open_area || true
+          # Never close the visible dock until the trigger is confirmed.
+          dock_wait_window dock_open_area || return 1
         fi
         dock_eww update menu-open=false menu-move-open=false >/dev/null 2>&1 || true
         if dock_window_active dock; then

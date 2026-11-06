@@ -91,7 +91,7 @@ def verified_owner(config_dir=None, runtime_dir=None):
             return None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        owner = module.verified_owner(config_dir=config_dir, runtime_dir=runtime_dir)
+        owner = module.verified_owner(config_dir=config_dir, runtime_dir=runtime_dir, probe_socket=False)
         return owner if isinstance(owner, dict) else None
     except Exception:
         return None

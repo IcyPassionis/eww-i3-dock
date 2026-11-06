@@ -5,9 +5,12 @@ import importlib.util
 import json
 import os
 import re
+import select
+import stat
 import struct
 import subprocess
 import sys
+import threading
 import time
 import zlib
 
@@ -42,6 +45,7 @@ XICON_DIR = os.path.expanduser("~/.cache/eww/icons")
 XPROP_MAX_BYTES = 64 * 1024 * 1024
 ICON_CACHE = {}
 FULLSCREEN_SCRIPT = "/home/boncuk/.config/eww/dock-fullscreen.sh"
+HIT_WIDTH_SCRIPT = "/home/boncuk/.config/eww/dock-hit-width.sh"
 
 # Active GTK theme + inheritance, resolved once at startup (cheap: a few
 # small text files, never per render).
@@ -85,7 +89,7 @@ def desktop_info(path):
             "exec": section.get("Exec", "").lower(),
             "stem": os.path.splitext(os.path.basename(path))[0].lower(),
         }
-    except (KeyError, configparser.Error, OSError):
+    except (KeyError, configparser.Error, OSError, UnicodeDecodeError):
         return None
 
 
@@ -619,9 +623,50 @@ def load_pinned(force=False):
             if isinstance(items, list):
                 _PINNED = items
                 _PINNED_MTIME = mtime
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             pass
     return _PINNED
+
+
+def pin_pattern(item):
+    """Compiled `match` regex for a usable pin, else None.
+
+    pinned-apps.json is hand-edited: one bad pin is skipped, the rest render.
+    """
+    if not isinstance(item, dict):
+        return None
+    match = item.get("match")
+    if not isinstance(match, str) or not match:
+        return None
+    if not isinstance(item.get("name"), str) or not isinstance(item.get("command"), str):
+        return None
+    try:
+        return re.compile(match, re.IGNORECASE)
+    except re.error:
+        return None
+
+
+def pin_desktop_stem(item):
+    desktop = item.get("desktop", "")
+    if not isinstance(desktop, str):
+        return ""
+    return desktop.removesuffix(".desktop").lower()
+
+
+STEAM_GAME_CLASS = re.compile(r"^steam_app_\d+$")
+
+
+def pin_claims(pattern, window):
+    """Whether a pin's regex claims an open window.
+
+    Steam game windows have class steam_app_<id>. A "steam" pin must not claim
+    them: it would hide the game's own button, and "Close window" would kill
+    the game. A pin whose match names steam_app (such as a menu pin built from
+    the game's class) still claims its game.
+    """
+    if STEAM_GAME_CLASS.search(window["class"]) and "steam_app" not in pattern.pattern.lower():
+        return False
+    return pattern.search(window["class"] + " " + window["instance"]) is not None
 
 
 def yuck(value):
@@ -643,10 +688,15 @@ def ctx_cmd(con, cls, desktop, command, pinned, running):
 CLOSE_MENU = "; /home/boncuk/.config/eww/dock-menu.sh dismiss >/dev/null 2>&1 || true"
 
 
+def quiet(action):
+    """Launched apps must not inherit the daemon's stdout, the Eww log."""
+    return "{ " + action + "; } >/dev/null 2>&1"
+
+
 def button(name, icon, action, classes, ctx=None):
     parts = (
         '(button :class ' + yuck("entry " + classes) +
-        ' :onclick ' + yuck(action + CLOSE_MENU) +
+        ' :onclick ' + yuck(quiet(action) + CLOSE_MENU) +
         ' :timeout "5s"'
     )
     if ctx:
@@ -667,7 +717,10 @@ HOVER_EXTRA = 6
 DOCK_CHROME = 72
 SCREEN_MARGIN = 48
 FALLBACK_MAX_WIDTH = 1280
+TRIGGER_WIDTH = 760  # dock_open_area in eww.yuck.
+HIT_INSET = 2  # Stay inside the dock despite centering rounding.
 _MAX_WIDTH = None
+_HIT_WIDTH = None
 
 
 def dock_max_width():
@@ -692,6 +745,32 @@ def dock_literal(taskbar, count, max_width):
             ' :hscroll true :vscroll false ' + main + ')')
 
 
+def hit_width(count, max_width):
+    return min(count * ENTRY_WIDTH + DOCK_CHROME, max_width, TRIGGER_WIDTH) - 2 * HIT_INSET
+
+
+def sync_hit_width(width):
+    """Update the trigger hover width; a failure retries on the next render."""
+    global _HIT_WIDTH
+    if width == _HIT_WIDTH:
+        return
+    script = os.environ.get("DOCK_HIT_WIDTH_SCRIPT", HIT_WIDTH_SCRIPT)
+    try:
+        result = subprocess.run(
+            [script, str(width)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            close_fds=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if result.returncode == 0:
+        _HIT_WIDTH = width
+
+
 def render(entries, index, tree=None, previous=None):
     pinned = load_pinned()
     windows = current_windows(tree)
@@ -700,9 +779,11 @@ def render(entries, index, tree=None, previous=None):
     used = set()
 
     for item in pinned:
-        pattern = re.compile(item.get("match", ""), re.IGNORECASE)
-        match = next((window for window in windows if pattern.search(window["class"] + " " + window["instance"])), None)
-        desktop_stem = item.get("desktop", "").removesuffix(".desktop").lower()
+        pattern = pin_pattern(item)
+        if pattern is None:
+            continue  # Hand-edited junk: skip this pin, keep the rest.
+        match = next((window for window in windows if pin_claims(pattern, window)), None)
+        desktop_stem = pin_desktop_stem(item)
         desktop = next((entry for entry in entries if entry["stem"] == desktop_stem), None)
         if desktop is None and match:
             desktop = app_for_window(match, entries, index)
@@ -728,9 +809,12 @@ def render(entries, index, tree=None, previous=None):
         result.append(button(window["title"], icon, f"i3-msg '[con_id={window['id']}] focus'", "running open", ctx))
 
     taskbar = '(box :class "taskbar" :space-evenly false ' + " ".join(result) + ')'
-    literal = dock_literal(taskbar, len(result), dock_max_width())
+    max_width = dock_max_width()
+    literal = dock_literal(taskbar, len(result), max_width)
     if literal != previous:
         print(literal, flush=True)
+    if "--listen" in sys.argv:
+        sync_hit_width(hit_width(len(result), max_width))
     return literal
 
 
@@ -743,8 +827,35 @@ def raise_docks(tree=None, workspaces=None):
     return native_x11().raise_docks()
 
 
+_SUBSCRIPTION = None  # Live i3-msg subscription, so the stdout watcher can stop it.
+
+
+def watch_stdout_reader():
+    """Exit once Eww, the reader of our stdout pipe, goes away.
+
+    An orphaned listener reconnects to a dead i3 forever: it prints nothing,
+    so it never gets EPIPE. poll() without a timeout sleeps until the kernel
+    reports POLLERR/POLLHUP, so this costs no periodic wake-ups. Not PDEATHSIG:
+    it fires when the parent *thread* exits, and Eww spawns us from a tokio thread.
+    """
+    if not stat.S_ISFIFO(os.fstat(1).st_mode):
+        return  # A terminal or file has no reader that can go away.
+    poller = select.poll()
+    poller.register(1, 0)  # Empty mask: only POLLERR/POLLHUP/POLLNVAL are reported.
+
+    def wait_for_reader():
+        poller.poll()
+        subscription = _SUBSCRIPTION
+        if subscription is not None:
+            subscription.terminate()
+        os._exit(0)  # Skip atexit: every print was flushed and nobody is reading.
+
+    threading.Thread(target=wait_for_reader, name="stdout-watch", daemon=True).start()
+
+
 def i3_events():
     """Block on events, reconnect on EOF with capped exponential backoff."""
+    global _SUBSCRIPTION
     delay = 0.1
     while True:
         subscription = None
@@ -754,6 +865,7 @@ def i3_events():
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL, text=True, close_fds=True,
             )
+            _SUBSCRIPTION = subscription
             assert subscription.stdout is not None
             # `i3-msg subscribe -m` emits monitor events, not the raw IPC
             # subscription acknowledgement. Read the stream directly: waiting
@@ -778,6 +890,7 @@ def i3_events():
             pass
         finally:
             if subscription is not None:
+                _SUBSCRIPTION = None
                 subscription.terminate()
                 try:
                     subscription.wait(timeout=1)
@@ -806,15 +919,17 @@ def listen(entries, index, previous=None, stamp=None):
         if event.get("change") == "unspecified":
             _MAX_WIDTH = None
         tree = current_tree()
-        workspaces = current_workspaces()
-        current = fullscreen_state(tree, workspaces)
-        # The detached helper acknowledges enqueueing, not application. Always
-        # reconcile the latest desired state on events; never remember a lost
-        # lock-contention request as already applied.
-        if current is not None:
-            sync_fullscreen("suppress" if current else "restore")
-        if current is False:
-            raise_docks()  # Fresh fullscreen check after helper IPC.
+        # A title change cannot move fullscreen or stacking; titles only feed tooltips.
+        if event.get("change") != "title":
+            workspaces = current_workspaces()
+            current = fullscreen_state(tree, workspaces)
+            # The detached helper acknowledges enqueueing, not application. Always
+            # reconcile the latest desired state on events; never remember a lost
+            # lock-contention request as already applied.
+            if current is not None:
+                sync_fullscreen("suppress" if current else "restore")
+            if current is False:
+                raise_docks()  # Fresh fullscreen check after helper IPC.
         if tree is not None:
             previous = render(entries, index, tree, previous=previous)
 
@@ -831,6 +946,8 @@ def main():
         print("unknown" if state is None else "true" if state else "false")
         return
 
+    if "--listen" in sys.argv:
+        watch_stdout_reader()
     pinned = load_pinned(force=True)
     stamp = app_dirs_stamp()  # Before the scan: a racing install rescans.
     entries, index = load_apps()
@@ -849,8 +966,10 @@ def main():
         if current is False:
             raise_docks()
     for item in pinned:
+        if pin_pattern(item) is None:
+            continue
         desktop = next((entry for entry in entries
-                        if entry["stem"] == item.get("desktop", "").removesuffix(".desktop").lower()), None)
+                        if entry["stem"] == pin_desktop_stem(item)), None)
         if desktop:
             needed.append(desktop["icon"])
     for window in windows:

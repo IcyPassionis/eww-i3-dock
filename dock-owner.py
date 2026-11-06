@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import socket
 import stat
@@ -133,6 +134,21 @@ def _same_supervisor(metadata):
         return False
 
 
+def _supervisor_gone(metadata):
+    """True only when the recorded supervisor is absent, exited, or pid-reused."""
+    if _same_supervisor(metadata):
+        return False
+    try:
+        pid = int(metadata["supervisor_pid"])
+        start_time = int(metadata["supervisor_start_time"])
+        tail = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return tail[0] in ("Z", "X") or int(tail[19]) != start_time
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return False
+
+
 def _socket_peer_matches(path, pid):
     """Check the currently addressable listener, not an unlinked old socket."""
     try:
@@ -147,8 +163,12 @@ def _socket_peer_matches(path, pid):
         return False
 
 
-def verified_owner(config_dir=None, runtime_dir=None):
-    """Return verified managed daemon metadata, or None for any uncertainty."""
+def verified_owner(config_dir=None, runtime_dir=None, probe_socket=True):
+    """Return verified managed daemon metadata, or None for any uncertainty.
+
+    probe_socket=False skips the connecting peer check for restacking only;
+    a connect without a message makes Eww log an IPC error on every call.
+    """
     try:
         config, _, base = _paths(config_dir, runtime_dir)
         metadata = json.loads((base / "owner.json").read_text())
@@ -164,7 +184,7 @@ def verified_owner(config_dir=None, runtime_dir=None):
             return None
         if not _same_supervisor(metadata):
             return None
-        if socket_path not in _socket_listeners(pid) or not _socket_peer_matches(socket_path, pid):
+        if socket_path not in _socket_listeners(pid) or (probe_socket and not _socket_peer_matches(socket_path, pid)):
             return None
         return {
             "pid": pid,
@@ -287,6 +307,50 @@ def _stop_child(pid, timeout):
         return
 
 
+def _reclaim(config_dir=None, runtime_dir=None, timeout=1.0):
+    """Stop the recorded Eww after its supervisor died; caller holds the lifetime lock.
+
+    Returns the reclaimed pid, or None on any uncertainty. The pidfd pins the
+    process, so the signal cannot reach a pid reused after the identity check.
+    """
+    config, _, base = _paths(config_dir, runtime_dir)
+    path = base / "owner.json"
+    try:
+        metadata = json.loads(path.read_text())
+        pid, start_time, display = metadata["pid"], metadata["start_time"], metadata["display"]
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    if not isinstance(pid, int) or not isinstance(start_time, int) or not isinstance(display, str) or not display:
+        return None
+    if display != os.environ.get("DISPLAY", "") or metadata.get("config_dir") != config:
+        return None
+    if not _same_identity(pid, start_time, config, display) or not _supervisor_gone(metadata):
+        return None
+    try:
+        fd = os.pidfd_open(pid)
+    except (OSError, AttributeError):
+        return None
+    try:
+        if not _same_identity(pid, start_time, config, display):
+            return None
+        try:
+            signal.pidfd_send_signal(fd, signal.SIGTERM)
+            # A pidfd becomes readable when its process exits, even before reaping.
+            if not select.select([fd], [], [], timeout)[0]:
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+                if not select.select([fd], [], [], timeout)[0]:
+                    raise TimeoutError("orphaned Eww daemon survived SIGKILL")
+        except ProcessLookupError:
+            pass  # It exited between the identity check and the signal.
+    finally:
+        os.close(fd)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    return pid
+
+
 def _main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir")
@@ -307,6 +371,8 @@ def _main():
     remove = commands.add_parser("remove")
     remove.add_argument("supervisor_pid", type=int)
     remove.add_argument("supervisor_start_time", type=int)
+    reclaim = commands.add_parser("reclaim")
+    reclaim.add_argument("--timeout", type=float, default=1.0)
     args = parser.parse_args()
     try:
         config, runtime, base = _paths(args.config_dir, args.runtime_dir, create=args.command == "paths")
@@ -332,6 +398,10 @@ def _main():
             _remove(config, runtime, args.supervisor_pid, args.supervisor_start_time)
         elif args.command == "stop":
             _stop_child(args.pid, args.timeout)
+        elif args.command == "reclaim":
+            pid = _reclaim(config, runtime, args.timeout)
+            if pid is not None:
+                print(f"dock-owner: reclaimed orphaned Eww daemon pid {pid}", file=sys.stderr)
         return 0
     except (OSError, ValueError, TimeoutError) as error:
         print(f"dock-owner: {error}", file=sys.stderr)

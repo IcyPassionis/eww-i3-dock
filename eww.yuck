@@ -11,6 +11,10 @@
 ; Submenu state for "Move to workspace". Reset alongside menu-open everywhere
 ; (ctx open, menu action, show/hide transitions) so it never opens stale.
 (defvar menu-move-open false)
+; Hover width of the trigger, kept inside the dock by dock-apps.py. A hover
+; beside a narrower dock would open it away from the pointer, where it never
+; gets the crossing that hides it again.
+(defvar dock-hit-width 760)
 
 (defwindow dock_open_area
   :monitor 0
@@ -23,6 +27,8 @@
     ; Keep the single event-driven listener alive when only the trigger is open.
     ; The initial (box) is nonempty, so cold-start edge hover remains active.
     :active {app-buttons != ""}
+    :halign "center"
+    :width dock-hit-width
     :onhover "/home/boncuk/.config/eww/dock-show.sh"
     ; Record trigger exit against the pending show token. This is only a
     ; pre-open stale-show hint; it does not replace the show request, because

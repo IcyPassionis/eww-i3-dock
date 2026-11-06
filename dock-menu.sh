@@ -16,10 +16,14 @@ fi
 . "$(dirname -- "$0")/dock-common.sh"
 export DOCK_PINNED_FILE=${DOCK_PINNED_FILE:-$DOCK_SCRIPT_DIR/pinned-apps.json}
 dock_run python3 - "$@" <<'PYEOF' >/dev/null 2>&1
-import configparser, json, os, re, subprocess, sys
+import configparser, fcntl, json, os, re, stat, subprocess, sys, tempfile, time
 
 CTX = os.path.join(os.environ["DOCK_RUNTIME_DIR"], "eww-dock-menu.json")
 PINNED = os.environ["DOCK_PINNED_FILE"]
+# Sidecar lock: save_pinned replaces PINNED, so its inode is not a stable lock.
+PIN_LOCK = PINNED + ".lock"
+# Below dock_run's 1s budget, so an abort is ours rather than a SIGKILL.
+PIN_LOCK_TIMEOUT = 0.5
 IPC_TIMEOUT = float(os.environ.get("DOCK_IPC_TIMEOUT", "1"))
 APP_DIRS = (
     os.path.expanduser("~/.local/share/applications"),
@@ -58,21 +62,45 @@ def i3_pin_tick():
         pass
 
 
+class PinAbort(Exception):
+    # Stops a pin action before any write; the menu still dismisses.
+    pass
+
+
 def load_pinned():
     try:
         with open(PINNED, encoding="utf-8") as file:
             items = json.load(file)
-        return items if isinstance(items, list) else []
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return []
+    except (OSError, ValueError):
+        # ValueError covers both JSONDecodeError and UnicodeDecodeError.
+        raise PinAbort()
+    # Anything but a list of objects is not ours to rewrite: an empty write
+    # here would silently discard every hand-pinned entry.
+    if not isinstance(items, list) or not all(isinstance(entry, dict) for entry in items):
+        raise PinAbort()
+    return items
 
 
 def save_pinned(items):
-    tmp = PINNED + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as file:
-        json.dump(items, file, ensure_ascii=False, indent=2)
-        file.write("\n")
-    os.replace(tmp, PINNED)
+    try:
+        mode = stat.S_IMODE(os.stat(PINNED).st_mode)
+    except FileNotFoundError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(PINNED) or ".", prefix=".pinned-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(items, file, ensure_ascii=False, indent=2)
+            file.write("\n")
+        os.chmod(tmp, mode)
+        os.replace(tmp, PINNED)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     i3_pin_tick()
 
 
@@ -113,7 +141,7 @@ def toggle_pin():
     try:
         parser.read(desktop_file, encoding="utf-8")
         name = parser["Desktop Entry"].get("Name", stem)
-    except (KeyError, configparser.Error, OSError):
+    except (KeyError, configparser.Error, OSError, UnicodeDecodeError):
         name = stem
     items.append({
         "name": name,
@@ -146,8 +174,27 @@ def move_to_workspace(number):
     i3_command(f"[con_id={con}] move container to workspace number {number}")
 
 
+def locked_toggle_pin():
+    # Hold the lock across load and save so a double click cannot interleave.
+    # Bounded: a held lock aborts instead of queueing behind a stuck writer.
+    with open(PIN_LOCK, "a") as lock:
+        deadline = time.monotonic() + PIN_LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise PinAbort()
+                time.sleep(0.02)
+        toggle_pin()
+
+
 if action == "pin":
-    toggle_pin()
+    try:
+        locked_toggle_pin()
+    except (PinAbort, OSError):
+        pass
 elif action == "closeopen":
     close_or_open()
 elif action == "moveto":

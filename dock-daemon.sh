@@ -22,8 +22,20 @@ export DOCK_RUNTIME_DIR="$RUNTIME_DIR" DOCK_STATE_DIR
 LOG="$RUNTIME_DIR/eww-dock.log"
 mkdir -p "$RUNTIME_DIR" || exit 1
 
+# Keep the append-only log bounded. The daemon writes with O_APPEND, so the
+# tail is rewritten in place; a line appended during the copy may be lost.
+trim_log() {
+  [ -f "$LOG" ] || return 0
+  log_size=$(wc -c 2>/dev/null <"$LOG" | tr -d ' ')
+  case $log_size in ''|*[!0-9]*) return 0 ;; esac
+  [ "$log_size" -gt 4194304 ] || return 0
+  tail -c 1048576 "$LOG" 2>/dev/null >"$LOG.tmp" && cat "$LOG.tmp" 2>/dev/null >"$LOG"
+  rm -f "$LOG.tmp"
+}
+
 case ${1:-ensure} in
   ensure)
+    trim_log 7>&- 8>&- 9>&-
     # Metadata identity is process/socket based, so a slow Eww IPC response
     # never makes a live owner eligible for replacement.
     if python3 - "$OWNER" "$CONFIG_DIR" "${DOCK_RUNTIME_DIR:-}" <<'PY'
@@ -51,6 +63,14 @@ esac
 exec 7>"$LOCK" || exit 1
 if ! flock -n 7 8>&- 9>&-; then
   exit 0
+fi
+
+# A SIGKILLed supervisor leaves its Eww running. Reclaim only the owner.json
+# record whose supervisor is gone; any uncertainty leaves it to unmanaged.
+if [ -n "${DOCK_RUNTIME_DIR:-}" ]; then
+  python3 "$OWNER" --config-dir "$CONFIG_DIR" --runtime-dir "$DOCK_RUNTIME_DIR" reclaim 7>&- 8>&- 9>&- || true
+else
+  python3 "$OWNER" --config-dir "$CONFIG_DIR" reclaim 7>&- 8>&- 9>&- || true
 fi
 
 if [ -n "${DOCK_RUNTIME_DIR:-}" ]; then
