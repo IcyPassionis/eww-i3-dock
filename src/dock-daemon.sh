@@ -3,6 +3,9 @@
 set -u
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 OWNER="$SCRIPT_DIR/dock-owner.py"
+# eww.yuck calls the dock scripts by bare name; the daemon is their only parent.
+PATH="$SCRIPT_DIR:$PATH"
+export PATH
 EWW=${DOCK_EWW_BIN:-eww}
 CONFIG_DIR=${DOCK_CONFIG_DIR:-$SCRIPT_DIR}
 CONFIG_DIR=$(CDPATH= cd -- "$CONFIG_DIR" 2>/dev/null && pwd -P) || {

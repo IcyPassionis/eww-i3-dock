@@ -1,0 +1,37 @@
+// Dock colours and font. Edit this file, run ./install.sh, then restart the dock.
+// Only colours live here; sizes stay in eww.scss because dock-apps.py's width
+// model (ENTRY_WIDTH / DOCK_CHROME) must match them.
+
+$font-family: sans-serif;
+
+$text: #DCE8F4;
+$text-strong: #E7F0F8;
+$text-dim: rgba(190, 211, 232, 0.68);
+
+$dock-bg: rgba(15, 29, 48, 0.78);
+$menu-bg: rgba(18, 32, 51, 0.88);
+$card-bg: rgba(17, 31, 49, 0.92);
+
+$border: rgba(153, 183, 213, 0.22);
+$card-border: rgba(175, 203, 232, 0.24);
+$separator: rgba(190, 211, 232, 0.24);
+$shadow: rgba(0, 8, 20, 0.22);
+$shadow-strong: rgba(0, 8, 20, 0.30);
+
+$hover: rgba(72, 103, 139, 0.66);
+$active: rgba(94, 130, 169, 0.74);
+$accent: #AFCBE8;
+
+$scroll-trough: rgba(190, 211, 232, 0.14);
+$scroll-slider: rgba(153, 183, 213, 0.48);
+$scroll-slider-hover: rgba(175, 203, 232, 0.70);
+
+$mute-bg: rgba(72, 103, 139, 0.28);
+$mute-hover: rgba(94, 130, 169, 0.48);
+$mute-on: rgba(94, 130, 169, 0.60);
+$volume-value: #BFD2E3;
+$slider-trough: rgba(190, 211, 232, 0.18);
+$slider-fill: #8EABC7;
+$slider-knob: #C8D8E8;
+$slider-knob-border: rgba(220, 232, 244, 0.45);
+$slider-knob-shadow: rgba(0, 8, 20, 0.30);

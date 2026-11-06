@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 /tmp/
+.hermes-tmp.*
+AGENTS.md
+.agents/
+.codex/
+docs/plans/
+docs/superpowers/
+tests/

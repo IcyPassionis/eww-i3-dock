@@ -1,6 +1,6 @@
 (deflisten app-buttons
   :initial "(box)"
-  "/home/boncuk/.config/eww/dock-apps.py --listen")
+  "dock-apps.py --listen")
 
 ; Context-menu popover state. Set by dock-ctx.sh on right-click, cleared by
 ; dock-menu.sh after an action and by the show/hide scripts on transitions.
@@ -29,11 +29,11 @@
     :active {app-buttons != ""}
     :halign "center"
     :width dock-hit-width
-    :onhover "/home/boncuk/.config/eww/dock-show.sh"
+    :onhover "dock-show.sh"
     ; Record trigger exit against the pending show token. This is only a
     ; pre-open stale-show hint; it does not replace the show request, because
     ; Eww can synthesize this crossing when the trigger is swapped for dock.
-    :onhoverlost "/home/boncuk/.config/eww/dock-cancel-hide.sh trigger-left"
+    :onhoverlost "dock-cancel-hide.sh trigger-left"
     (box :class "dock-trigger")))
 
 (defwindow dock
@@ -54,8 +54,8 @@
     :transition "slideup"
     :duration "220ms"
     (eventbox
-      :onhover "/home/boncuk/.config/eww/dock-cancel-hide.sh"
-      :onhoverlost "/home/boncuk/.config/eww/dock-schedule-hide.sh"
+      :onhover "dock-cancel-hide.sh"
+      :onhoverlost "dock-schedule-hide.sh"
       (box :orientation "vertical" :space-evenly false
         ; Right-click popover: revealed above the icons, inside the dock
         ; window so interacting with it keeps the hover veto alive.
@@ -65,10 +65,10 @@
             ; visible and gate layout with nonanimated inner revealers instead.
             (revealer :reveal menu-has-desktop :transition "none" :duration "0ms"
               (button :class "ctx-item" :timeout "5s"
-                :onclick "/home/boncuk/.config/eww/dock-menu.sh pin"
+                :onclick "dock-menu.sh pin"
                 {menu-pinned ? "Unpin from dock" : "Pin to dock"}))
             (button :class "ctx-item" :timeout "5s"
-              :onclick "/home/boncuk/.config/eww/dock-menu.sh closeopen"
+              :onclick "dock-menu.sh closeopen"
               {menu-running ? "Close window" : "Open"})
             ; Numbered workspaces only (1-10): i3 maps `workspace number N`
             ; onto `N: name` variants, so named-numbered setups just work.
@@ -76,22 +76,22 @@
             (revealer :reveal menu-running :transition "none" :duration "0ms"
               (box :orientation "vertical" :space-evenly false
               (button :class "ctx-item" :timeout "5s"
-                :onclick "/home/boncuk/.config/eww/dock-move-toggle.sh"
+                :onclick "dock-move-toggle.sh"
                 {menu-move-open ? "Move to workspace ▾" : "Move to workspace ▸"})
               (revealer :reveal menu-move-open :transition "slideup" :duration "150ms"
                 ; Even spread suits a 1-10 strip (and keeps it clear of the
                 ; left edge under the centered text rows above).
                 (box :class "ws-grid" :space-evenly true :halign "center"
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 1" "1")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 2" "2")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 3" "3")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 4" "4")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 5" "5")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 6" "6")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 7" "7")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 8" "8")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 9" "9")
-                (button :class "ws-item" :timeout "5s" :onclick "/home/boncuk/.config/eww/dock-menu.sh moveto 10" "10")))))))
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 1" "1")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 2" "2")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 3" "3")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 4" "4")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 5" "5")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 6" "6")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 7" "7")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 8" "8")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 9" "9")
+                (button :class "ws-item" :timeout "5s" :onclick "dock-menu.sh moveto 10" "10")))))))
         ; Do not paint colored chrome while the listener is prefetching icons.
         (revealer :reveal {app-buttons != "(box)"} :transition "none" :duration "0ms"
           ; dock-apps.py emits the colored .dock-main pill, wrapped in a
@@ -102,7 +102,7 @@
 ; Small audio popover opened from Polybar's volume indicator.
 (deflisten volume-state
   :initial "{\"volume\": 50, \"muted\": false}"
-  "/home/boncuk/.config/eww/volume-listen.sh")
+  "volume-listen.sh")
 
 (defwidget volume-control []
   (box :class "volume-card" :orientation "vertical" :space-evenly false

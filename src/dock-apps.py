@@ -14,7 +14,8 @@ import threading
 import time
 import zlib
 
-PINNED = "/home/boncuk/.config/eww/pinned-apps.json"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PINNED = os.environ.get("DOCK_PINNED_FILE") or os.path.join(SCRIPT_DIR, "pinned-apps.json")
 _PINNED = []
 _PINNED_MTIME = None
 PIN_TICK = "dock-pins"  # i3 tick payload meaning "pinned-apps.json changed"
@@ -44,8 +45,8 @@ IMAGE_EXTS = (".svg", ".png", ".xpm")
 XICON_DIR = os.path.expanduser("~/.cache/eww/icons")
 XPROP_MAX_BYTES = 64 * 1024 * 1024
 ICON_CACHE = {}
-FULLSCREEN_SCRIPT = "/home/boncuk/.config/eww/dock-fullscreen.sh"
-HIT_WIDTH_SCRIPT = "/home/boncuk/.config/eww/dock-hit-width.sh"
+FULLSCREEN_SCRIPT = os.path.join(SCRIPT_DIR, "dock-fullscreen.sh")
+HIT_WIDTH_SCRIPT = os.path.join(SCRIPT_DIR, "dock-hit-width.sh")
 
 # Active GTK theme + inheritance, resolved once at startup (cheap: a few
 # small text files, never per render).
@@ -112,8 +113,7 @@ def build_index(entries):
     """Exact-match index over StartupWMClass + file stem (first wins).
 
     The `.desktop` Name is deliberately excluded: generic names like
-    "Browser" or "Files" substring-match unrelated windows (Brave once
-    matched a Waydroid "Browser" entry and showed a Jelly icon).
+    "Browser" or "Files" substring-match unrelated windows.
     """
     index = {}
     for entry in entries:
@@ -322,8 +322,8 @@ def find_icon(icon_name):
     over symbolic, scalable over fixed size, largest size next, then user
     dirs over system dirs, then the active GTK theme chain (breeze-dark ->
     breeze -> hicolor) breaks ties. So a 16px themed icon never beats a
-    scalable one from another theme, and your Candy/WhiteSur look survives
-    where the GTK theme has no (or only a tiny) hit.
+    scalable one from another theme, and the user's icon theme survives where
+    the GTK theme has no (or only a tiny) hit.
     """
     if not icon_name:
         return None
@@ -681,11 +681,11 @@ def ctx_cmd(con, cls, desktop, command, pinned, running):
     """Right-click handler: dock-ctx.sh shows the popover for this icon."""
     args = [str(con or ""), cls or "", desktop or "", command or "",
             "1" if pinned else "0", "1" if running else "0"]
-    return "/home/boncuk/.config/eww/dock-ctx.sh " + " ".join(shquote(arg) for arg in args)
+    return shquote(os.path.join(SCRIPT_DIR, "dock-ctx.sh")) + " " + " ".join(shquote(arg) for arg in args)
 
 
 # Dismiss the popover on any left-click (stale menu must not linger).
-CLOSE_MENU = "; /home/boncuk/.config/eww/dock-menu.sh dismiss >/dev/null 2>&1 || true"
+CLOSE_MENU = "; " + shquote(os.path.join(SCRIPT_DIR, "dock-menu.sh")) + " dismiss >/dev/null 2>&1 || true"
 
 
 def quiet(action):
