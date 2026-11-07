@@ -54,7 +54,10 @@ THEME_CHAIN = []
 
 
 def tree_windows(node):
-    if not isinstance(node, dict):
+    # i3 keeps bar clients (i3bar, polybar) under a "dockarea" container. They
+    # are not applications: the tree reports their window_type as "unknown",
+    # so the dock window_type check below cannot catch them.
+    if not isinstance(node, dict) or node.get("type") == "dockarea":
         return
     if node.get("window") and node.get("window_type") != "dock":
         props = node.get("window_properties") or {}
