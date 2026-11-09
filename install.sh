@@ -10,6 +10,7 @@ SRC="$(cd "$(dirname "$0")" && pwd)/src"
 DEST=${DOCK_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/eww}
 mkdir -p "$DEST"
 for file in "$SRC"/*; do
+  [ -f "$file" ] || continue
   case $(basename "$file") in
     pinned-apps.json) ;;
     *) cp "$file" "$DEST/" ;;

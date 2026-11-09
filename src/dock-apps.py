@@ -131,11 +131,20 @@ def load_apps():
     return entries, build_index(entries)
 
 
-def app_for_window(window, entries, index):
+def app_for_window(window, entries, index, exact_only=False):
+    """Desktop entry for a window; `exact_only` drops the substring guess.
+
+    Icon and pin lookups pass exact_only=True: a weak name hit must never
+    outrank the window's own _NET_WM_ICON or claim a pin for another app
+    (class "Strawberry Clicker" resolved to the unrelated Steam shortcut
+    "Strawberry.desktop" and launched that game instead).
+    """
     keys = [key for key in (norm(window["class"]), norm(window["instance"])) if key]
     for key in keys:
         if key in index:
             return index[key]
+    if exact_only:
+        return None
     # Last resort: substring match on wmclass/stem only (never Name), e.g.
     # class "unity" vs stem "unityhub". Exact pass above runs first, so
     # "zen" hits zen.desktop before it could reach "zenity".
@@ -428,18 +437,30 @@ def xwin_icon(xwin, key):
 
 
 def icon_for_window(window, entries, index):
+    desktop = app_for_window(window, entries, index, exact_only=True)
+    if desktop:
+        found = find_icon(desktop.get("icon", ""))
+        if found:
+            return found
+    # The window's own icon beats any substring-guessed desktop match: a
+    # wrong name hit (Strawberry Clicker -> Strawberry.desktop) used to hide
+    # the icon the app itself set in _NET_WM_ICON.
+    key = window["class"] or window["instance"] or window["title"]
+    cache_key = "x11:" + key
+    if cache_key in ICON_CACHE:
+        found = ICON_CACHE[cache_key]
+    else:
+        found = xwin_icon(window["xwin"], key)
+        ICON_CACHE[cache_key] = found
+    if found:
+        return found
+    # Last resort: a weaker match still beats the launcher grid.
     desktop = app_for_window(window, entries, index)
     if desktop:
         found = find_icon(desktop.get("icon", ""))
         if found:
             return found
-    key = window["class"] or window["instance"] or window["title"]
-    cache_key = "x11:" + key
-    if cache_key in ICON_CACHE:
-        return ICON_CACHE[cache_key] or LAUNCHER_ICON
-    found = xwin_icon(window["xwin"], key) or LAUNCHER_ICON
-    ICON_CACHE[cache_key] = found if found != LAUNCHER_ICON else None
-    return found
+    return LAUNCHER_ICON
 
 
 def _fullscreen_mode(node):
@@ -789,7 +810,7 @@ def render(entries, index, tree=None, previous=None):
         desktop_stem = pin_desktop_stem(item)
         desktop = next((entry for entry in entries if entry["stem"] == desktop_stem), None)
         if desktop is None and match:
-            desktop = app_for_window(match, entries, index)
+            desktop = app_for_window(match, entries, index, exact_only=True)
         icon = find_icon((desktop or {}).get("icon", "")) if desktop else None
         if icon is None and match:
             key = match["class"] or match["instance"] or item["name"]
@@ -806,7 +827,7 @@ def render(entries, index, tree=None, previous=None):
         if window["id"] in used:
             continue
         icon = icon_for_window(window, entries, index)
-        desktop = app_for_window(window, entries, index)
+        desktop = app_for_window(window, entries, index, exact_only=True)
         ctx = ctx_cmd(window["id"], window["class"], desktop["stem"] if desktop else "",
                       "", False, True)
         result.append(button(window["title"], icon, f"i3-msg '[con_id={window['id']}] focus'", "running open", ctx))
